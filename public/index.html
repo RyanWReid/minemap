@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minecraft Map</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Minecraft-style font -->
+  <style>
+    @font-face {
+      font-family: 'Minecraft';
+      src: url('https://cdn.jsdelivr.net/gh/South-Paw/typeface-minecraft@master/fonts/minecraft.woff2') format('woff2');
+      font-weight: normal;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Minecraft', monospace;
+      background: #2c2c2c;
+      overflow: hidden;
+    }
+
+    #map {
+      width: 100vw;
+      height: 100vh;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    /* Make tiles render crispy */
+    .leaflet-tile {
+      image-rendering: pixelated !important;
+      image-rendering: crisp-edges !important;
+    }
+
+    /* Disable tile fade-in for crispness */
+    .leaflet-tile-container {
+      will-change: auto !important;
+    }
+
+    /* Style the zoom controls */
+    .leaflet-control-zoom a {
+      font-family: 'Minecraft', monospace !important;
+      background: #8b8b8b !important;
+      border: 2px solid #555 !important;
+      color: #fff !important;
+      width: 36px !important;
+      height: 36px !important;
+      line-height: 36px !important;
+      font-size: 18px !important;
+    }
+
+    .leaflet-control-zoom a:hover {
+      background: #aaa !important;
+    }
+
+    /* Search bar */
+    #search-container {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      display: flex;
+      gap: 0;
+    }
+
+    #search-input {
+      font-family: 'Minecraft', monospace;
+      font-size: 14px;
+      padding: 10px 16px;
+      width: 360px;
+      border: 3px solid #555;
+      border-right: none;
+      background: #c6c6c6;
+      color: #3f3f3f;
+      outline: none;
+      box-shadow: inset 2px 2px 0 #8b8b8b, inset -2px -2px 0 #fff;
+    }
+
+    #search-input::placeholder {
+      color: #7a7a7a;
+    }
+
+    #search-btn {
+      font-family: 'Minecraft', monospace;
+      font-size: 14px;
+      padding: 10px 16px;
+      border: 3px solid #555;
+      background: #8b8b8b;
+      color: #fff;
+      cursor: pointer;
+      box-shadow: inset 2px 2px 0 #aaa, inset -2px -2px 0 #555;
+    }
+
+    #search-btn:hover {
+      background: #aaa;
+    }
+
+    #search-btn:active {
+      box-shadow: inset -2px -2px 0 #aaa, inset 2px 2px 0 #555;
+    }
+
+    /* Coordinates display */
+    #coords {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      font-family: 'Minecraft', monospace;
+      font-size: 12px;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 6px 14px;
+      border: 2px solid #555;
+    }
+
+    /* Attribution */
+    .leaflet-control-attribution {
+      font-family: 'Minecraft', monospace !important;
+      font-size: 10px !important;
+      background: rgba(0, 0, 0, 0.6) !important;
+      color: #aaa !important;
+    }
+
+    .leaflet-control-attribution a {
+      color: #8bf !important;
+    }
+
+    /* View toggle */
+    #view-toggle {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      z-index: 1000;
+      display: flex;
+      gap: 0;
+    }
+
+    .toggle-btn {
+      font-family: 'Minecraft', monospace;
+      font-size: 12px;
+      padding: 8px 14px;
+      border: 3px solid #555;
+      background: #6b6b6b;
+      color: #aaa;
+      cursor: pointer;
+      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
+    }
+
+    .toggle-btn:first-child {
+      border-right: none;
+    }
+
+    .toggle-btn.active {
+      background: #4a8c3f;
+      color: #fff;
+      box-shadow: inset -2px -2px 0 #6ab35e, inset 2px 2px 0 #2d6324;
+    }
+
+    .toggle-btn:hover:not(.active) {
+      background: #888;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Search bar -->
+  <div id="search-container">
+    <input type="text" id="search-input" placeholder="Search coordinates (lat, lng)..." />
+    <button id="search-btn">Go</button>
+  </div>
+
+  <!-- View toggle -->
+  <div id="view-toggle">
+    <button class="toggle-btn active" id="btn-minecraft" onclick="setView('minecraft')">Minecraft</button>
+    <button class="toggle-btn" id="btn-satellite" onclick="setView('satellite')">Satellite</button>
+    <button class="toggle-btn" id="btn-roads" onclick="setView('roads')">Roads</button>
+  </div>
+
+  <!-- Map -->
+  <div id="map"></div>
+
+  <!-- Coordinates -->
+  <div id="coords">X: 0, Z: 0</div>
+
+  <script>
+    // Initialize map centered on Manhattan
+    const map = L.map('map', {
+      center: [40.7480, -73.9860],
+      zoom: 14,
+      minZoom: 2,
+      maxZoom: 18,
+      zoomControl: true,
+      attributionControl: true,
+    });
+
+    // Tile layers
+    const mcLayer = L.tileLayer('/tiles/{z}/{x}/{y}.png', {
+      tileSize: 256,
+      maxNativeZoom: 14,
+      maxZoom: 18,
+      attribution: '&copy; <a href="https://openstreetmap.org">OSM</a> | Minecraft Map',
+    });
+
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      attribution: '&copy; Esri',
+    });
+
+    const roadsLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://openstreetmap.org">OSM</a>',
+    });
+
+    let activeLayer = mcLayer;
+    mcLayer.addTo(map);
+
+    function setView(mode) {
+      map.removeLayer(activeLayer);
+
+      // Update button states
+      document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+
+      if (mode === 'minecraft') {
+        activeLayer = mcLayer;
+        document.getElementById('btn-minecraft').classList.add('active');
+        document.getElementById('map').style.imageRendering = 'pixelated';
+      } else if (mode === 'satellite') {
+        activeLayer = satelliteLayer;
+        document.getElementById('btn-satellite').classList.add('active');
+        document.getElementById('map').style.imageRendering = 'auto';
+      } else {
+        activeLayer = roadsLayer;
+        document.getElementById('btn-roads').classList.add('active');
+        document.getElementById('map').style.imageRendering = 'auto';
+      }
+
+      activeLayer.addTo(map);
+    }
+
+    // Update coordinates on mouse move (Minecraft-style XZ)
+    map.on('mousemove', (e) => {
+      const lat = e.latlng.lat.toFixed(4);
+      const lng = e.latlng.lng.toFixed(4);
+      // Convert to Minecraft-ish coordinates for fun
+      const mcX = Math.floor(lng * 1000);
+      const mcZ = Math.floor(-lat * 1000);
+      document.getElementById('coords').textContent = `X: ${mcX}  Z: ${mcZ}  (${lat}, ${lng})`;
+    });
+
+    // Search functionality (simple coordinate search)
+    document.getElementById('search-btn').addEventListener('click', doSearch);
+    document.getElementById('search-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') doSearch();
+    });
+
+    async function doSearch() {
+      const query = document.getElementById('search-input').value.trim();
+      if (!query) return;
+
+      // Check if it's coordinates (lat, lng)
+      const coordMatch = query.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+      if (coordMatch) {
+        const lat = parseFloat(coordMatch[1]);
+        const lng = parseFloat(coordMatch[2]);
+        map.setView([lat, lng], 16);
+        return;
+      }
+
+      // Use Nominatim geocoding for place names
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
+          { headers: { 'User-Agent': 'MinecraftMap/1.0' } }
+        );
+        const data = await res.json();
+        if (data.length > 0) {
+          const { lat, lon } = data[0];
+          map.setView([parseFloat(lat), parseFloat(lon)], 16);
+        }
+      } catch (err) {
+        console.error('Search failed:', err);
+      }
+    }
+  </script>
+</body>
+</html>
