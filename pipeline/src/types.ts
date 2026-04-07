@@ -38,6 +38,11 @@ export enum SemanticClass {
   CEMETERY = 16,
   INDUSTRIAL = 17,
   RESIDENTIAL_ZONE = 18,
+  POOL = 19,
+  SPORTS_PITCH = 20,
+  PLAYGROUND = 21,
+  SCHOOL = 22,
+  PATH_DIRT = 23,
 }
 
 export const SEMANTIC_CLASS_NAMES: Record<SemanticClass, string> = {
@@ -60,6 +65,11 @@ export const SEMANTIC_CLASS_NAMES: Record<SemanticClass, string> = {
   [SemanticClass.CEMETERY]: 'Cemetery',
   [SemanticClass.INDUSTRIAL]: 'Industrial',
   [SemanticClass.RESIDENTIAL_ZONE]: 'Residential',
+  [SemanticClass.POOL]: 'Pool',
+  [SemanticClass.SPORTS_PITCH]: 'Sports Pitch',
+  [SemanticClass.PLAYGROUND]: 'Playground',
+  [SemanticClass.SCHOOL]: 'School',
+  [SemanticClass.PATH_DIRT]: 'Dirt Path',
 };
 
 // Color for debug visualization of each class
@@ -83,6 +93,11 @@ export const SEMANTIC_CLASS_COLORS: Record<SemanticClass, [number, number, numbe
   [SemanticClass.CEMETERY]:         [90, 100, 70],
   [SemanticClass.INDUSTRIAL]:       [140, 140, 140],
   [SemanticClass.RESIDENTIAL_ZONE]: [170, 150, 130],
+  [SemanticClass.POOL]: [60, 180, 220],
+  [SemanticClass.SPORTS_PITCH]: [180, 120, 60],
+  [SemanticClass.PLAYGROUND]: [200, 160, 80],
+  [SemanticClass.SCHOOL]: [180, 160, 140],
+  [SemanticClass.PATH_DIRT]: [148, 121, 65],
 };
 
 export interface SemanticMap {

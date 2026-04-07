@@ -127,4 +127,9 @@ export const COLUMN_RULES: Record<SemanticClass, ColumnRule> = {
   [SemanticClass.CEMETERY]:         { surface: 'minecraft:podzol',           subsurface: 'minecraft:dirt',    depth: 3, base: 'minecraft:stone' },
   [SemanticClass.INDUSTRIAL]:       { surface: 'minecraft:smooth_stone',     subsurface: 'minecraft:stone',   depth: 1, base: 'minecraft:stone' },
   [SemanticClass.RESIDENTIAL_ZONE]: { surface: 'minecraft:grass_block',      subsurface: 'minecraft:dirt',    depth: 3, base: 'minecraft:stone' },
+  [SemanticClass.POOL]:             { surface: 'minecraft:water',            subsurface: 'minecraft:quartz_block', depth: 1, base: 'minecraft:stone', fillToSeaLevel: true },
+  [SemanticClass.SPORTS_PITCH]:     { surface: 'minecraft:terracotta',       subsurface: 'minecraft:dirt',    depth: 2, base: 'minecraft:stone' },
+  [SemanticClass.PLAYGROUND]:       { surface: 'minecraft:sand',             subsurface: 'minecraft:dirt',    depth: 2, base: 'minecraft:stone' },
+  [SemanticClass.SCHOOL]:           { surface: 'minecraft:smooth_stone',     subsurface: 'minecraft:stone',   depth: 1, base: 'minecraft:stone', extrude: true },
+  [SemanticClass.PATH_DIRT]:        { surface: 'minecraft:dirt_path',        subsurface: 'minecraft:dirt',    depth: 2, base: 'minecraft:stone' },
 };

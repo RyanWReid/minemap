@@ -95,12 +95,16 @@ export function renderTopDown(
   }
 
   ctx.putImageData(imageData, 0, 0);
-  savePNG(canvas, outputPath);
-  console.log(`  Saved: ${outputPath}`);
+
+  if (outputPath) {
+    savePNG(canvas, outputPath);
+    console.log(`  Saved: ${outputPath}`);
+  }
 
   return {
     data: outputPath,
+    buffer: canvas.toBuffer('image/png'),
     metadata: { stage: 'top-down-preview', durationMs: Date.now() - start, timestamp: Date.now() },
-    debugOutputs: [{ name: 'top-down', path: outputPath, description: 'Top-down voxel world preview' }],
+    debugOutputs: outputPath ? [{ name: 'top-down', path: outputPath, description: 'Top-down voxel world preview' }] : [],
   };
 }

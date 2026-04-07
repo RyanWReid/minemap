@@ -1,1 +1,8 @@
 node_modules/
+pipeline/node_modules/
+pipeline/output/
+pipeline/tile-cache/
+pipeline/overpass-cache/
+*.png
+!public/**/*.png
+.DS_Store

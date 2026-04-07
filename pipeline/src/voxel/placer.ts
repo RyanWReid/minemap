@@ -51,28 +51,30 @@ export function placeBlocks(
       const hz = Math.floor(z * hScaleY);
       const surfaceY = heightMap.quantized[hz * heightMap.width + hx] || seaLevel;
 
-      // Place bedrock at Y=0
-      setWorldBlock(world, x, 0, z, 'minecraft:bedrock');
-
-      // Fill stone from Y=1 to surfaceY - depth
-      const stoneTop = Math.max(1, surfaceY - rule.depth);
-      for (let y = 1; y <= stoneTop; y++) {
-        setWorldBlock(world, x, y, z, rule.base);
+      // Only place the top few layers — underground is never visible in top-down view.
+      // For .schem export, underground would need a full fill pass separately.
+      // Place just surface - 1 (subsurface peek) for shading depth
+      if (surfaceY > 1) {
+        setWorldBlock(world, x, surfaceY - 1, z, rule.subsurface);
       }
 
-      // Fill subsurface layers
-      for (let y = stoneTop + 1; y < surfaceY; y++) {
-        setWorldBlock(world, x, y, z, rule.subsurface);
-      }
-
-      // Place surface block — use satellite color override if available
+      // Place surface block with texture variation for natural areas
       if (surfaceY > 0) {
         const colorIdx = z * width + x;
         const surfaceOverride = surfaceColors?.blockOverrides[colorIdx];
         if (surfaceOverride && !rule.extrude && !rule.fillToSeaLevel) {
           setWorldBlock(world, x, surfaceY, z, surfaceOverride);
         } else {
-          setWorldBlock(world, x, surfaceY, z, rule.surface);
+          let surfaceBlock = rule.surface;
+
+          // Subtle forest undergrowth only (not on open grass/parks)
+          if (cls === SemanticClass.FOREST) {
+            const texHash = ((x * 48271) ^ (z * 93461)) & 0xFFFF;
+            if (texHash < 300) surfaceBlock = 'minecraft:podzol';
+            else if (texHash < 500) surfaceBlock = 'minecraft:moss_block';
+          }
+
+          setWorldBlock(world, x, surfaceY, z, surfaceBlock);
         }
       }
 

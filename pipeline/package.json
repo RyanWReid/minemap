@@ -13,6 +13,7 @@
     "canvas": "^3.2.3",
     "express": "^5.2.1",
     "pbf": "^4.0.1",
+    "pmtiles": "^4.4.0",
     "prismarine-nbt": "^2.8.0"
   },
   "devDependencies": {
