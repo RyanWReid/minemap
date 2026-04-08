@@ -2411,7 +2411,7 @@
       }
       input.value = '';
       input.focus();
-      tryAchievement('first_chat', 'Achievement Made!', 'Is Anybody There?');
+      tryAchievement('first_chat', 'Achievement Made!', 'Is Anybody There?', '/icons/sign.png');
     }
 
     document.getElementById('chat-input').addEventListener('keydown', function(e) {
@@ -2821,7 +2821,7 @@
       }
       if (!navigator.geolocation) { alert('Geolocation is not supported. Make sure you are using HTTPS.'); return; }
       locateActive = true; followMode = true; btn.classList.add('active');
-      tryAchievement('first_locate', 'Achievement Made!', 'Where Am I?');
+      tryAchievement('first_locate', 'Achievement Made!', 'Where Am I?', '/icons/compass_0.png');
       const playerIcon = L.icon({ iconUrl: makePlayerIcon(), iconSize: [21, 24], iconAnchor: [10, 12], className: 'player-marker' });
       watchId = navigator.geolocation.watchPosition(
         pos => {
@@ -3198,7 +3198,7 @@
       achievementsEarned = {};
       localStorage.removeItem('mc-achievements');
       SFX.play('levelup', 0.3);
-      showAchievement('Reset Complete', 'All achievements cleared');
+      showAchievement('Reset Complete', 'All achievements cleared', '/icons/dirt.png');
     }
 
     function deleteAccount() {
@@ -3507,7 +3507,7 @@
           localStorage.setItem('mc-home', JSON.stringify(homeLocation));
           updateHomeBtn(); showHomeMarker();
           SFX.play('levelup', 0.3);
-          tryAchievement('set_spawn', 'Achievement Made!', 'Sweet Dreams');
+          tryAchievement('set_spawn', 'Achievement Made!', 'Sweet Dreams', '/icons/bed.png');
         }, 800);
       });
       homeBtn.addEventListener('mouseup', () => {
