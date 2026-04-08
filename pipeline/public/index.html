@@ -22,20 +22,11 @@
     .leaflet-tile { image-rendering: pixelated !important; }
     .leaflet-container { background: url('/icons/dirt.png') repeat !important; background-size: 64px 64px !important; image-rendering: pixelated !important; }
 
-    /* Top bar — settings gear + layer toggle */
+    /* Top bar — layer toggle (desktop) */
     #controls {
       position: absolute; top: 40px; right: 40px;
       z-index: 1000; display: flex; gap: 2px;
     }
-    #settings-btn {
-      position: static; width: 32px; height: 32px;
-      padding: 0; border: 2px solid #555;
-      background: #8B8B8B; cursor: pointer; display: flex;
-      align-items: center; justify-content: center;
-      box-shadow: inset 2px 2px 0 #aaa, inset -2px -2px 0 #555;
-    }
-    #settings-btn:hover { background: #a0a0a0; }
-    #settings-btn svg { width: 16px; height: 16px; }
     .ctrl-btn {
       font-family: 'Minecraft', monospace; font-size: 11px;
       padding: 6px 14px; border: 2px solid #555;
@@ -284,11 +275,7 @@
     }
     /* Leaflet zoom hidden — integrated into #toolbar */
     .leaflet-control-zoom { display: none !important; }
-    .leaflet-control-attribution {
-      font-family: 'Minecraft', monospace !important; font-size: 10px !important;
-      background: rgba(0,0,0,0.6) !important; color: #aaa !important;
-      margin-bottom: 26px !important; margin-right: 28px !important;
-    }
+    .leaflet-control-attribution { display: none !important; }
 
     .player-marker {
       image-rendering: pixelated;
@@ -1023,65 +1010,64 @@
 
     /* ===== MOBILE RESPONSIVE ===== */
     @media (max-width: 768px) {
-      /* Search panel — full width, smaller margin */
-      #search-panel { top: 12px; left: 8px; right: 8px; width: auto; }
-      #nav-map-toggle { top: 12px; left: 8px; }
-      #search-input { font-size: 14px; padding: 10px 12px; }
-      .ac-item { font-size: 12px; padding: 10px; }
-      .ac-item .ac-sub { font-size: 10px; }
+      :root { --ft: 12px; --fc: 18px; }
 
-      /* Top bar */
-      #controls { top: 12px; right: 8px; }
-      .ctrl-btn { font-size: 9px; padding: 5px 8px; }
-      #settings-btn { padding: 5px 8px; }
-      #settings-btn svg { width: 14px; height: 14px; }
+      /* Frame safety zone: --ft (12px) + 4px gap = 16px from each edge */
+      /* Hide desktop layer toggle — use cycle button in social-btns instead */
+      #controls { display: none; }
 
-      /* Social buttons */
-      #social-btns { right: 10px; }
-      .social-btn { width: 42px; height: 42px; font-size: 18px; }
+      /* Search panel — inside frame */
+      #search-panel { top: 16px; left: 18px; right: 18px; width: auto; }
+      #nav-map-toggle { top: 16px; left: 18px; width: 34px; height: 34px; }
+      #search-input { font-size: 13px; padding: 8px 10px; }
+      .ac-item { font-size: 11px; padding: 8px; }
+      .ac-item .ac-sub { font-size: 9px; }
+
+      /* Social buttons — inside frame */
+      #social-btns { right: 18px; }
+      .social-btn { width: 34px; height: 34px; font-size: 14px; }
+      .social-btn svg { width: 16px; height: 16px; }
       .social-btn::after { display: none; }
 
-      /* Toolbar */
-      #toolbar { right: 10px; bottom: 60px; }
-      .toolbar-slot { width: 42px; height: 42px; font-size: 18px; }
+      /* Toolbar — inside frame */
+      #toolbar { right: 18px; bottom: 50px; padding: 2px; }
+      .toolbar-slot { width: 34px; height: 34px; font-size: 16px; }
+      .toolbar-slot svg { width: 16px; height: 16px; }
       .toolbar-slot::after { display: none; }
 
-      /* Clock */
-      #clock-hud { bottom: 40px; left: 8px; }
-      #mc-clock { width: 36px; height: 36px; }
-      #clock-time { font-size: 11px; }
-      #clock-weather { font-size: 8px; }
-      /* Coords */
-      #coords { bottom: 8px; font-size: 9px; padding: 3px 8px; }
+      /* Clock — inside frame */
+      #clock-hud { bottom: 36px; left: 18px; gap: 6px; }
+      #mc-clock { width: 30px; height: 30px; }
+      #clock-time { font-size: 10px; }
+      #clock-weather { font-size: 7px; }
+
+      /* Coords — inside frame, centered */
+      #coords { bottom: 16px; font-size: 8px; padding: 2px 8px; max-width: 65vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
       /* Friends panel */
-      #friends-panel { top: auto; bottom: 60px; left: 8px; right: 8px; width: auto; }
+      #friends-panel { top: auto; bottom: 60px; left: 18px; right: 18px; width: auto; }
 
       /* Chat box */
-      #chat-box { left: 8px; bottom: 90px; width: auto; right: 60px; }
-      /* zoom in toolbar */
+      #chat-box { left: 18px; bottom: 80px; width: auto; right: 60px; }
 
-      /* Nav banner */
-      #nav-banner { bottom: 50px; left: auto; right: auto; min-width: auto; max-width: 90vw; padding: 0; }
-      #nav-compass { width: 48px; height: 48px; }
-      #nav-text { padding: 6px 10px; }
-      #nav-direction { font-size: 14px; }
-      #nav-distance { font-size: 10px; }
+      /* Nav banner — centered above coords, inside frame */
+      #nav-banner { bottom: 40px; left: 50%; right: auto; transform: translateX(-50%); min-width: auto; max-width: 80vw; padding: 0; }
+      #nav-compass { width: 44px; height: 44px; }
+      #nav-text { padding: 5px 10px; }
+      #nav-direction { font-size: 12px; }
+      #nav-distance { font-size: 9px; }
 
       /* Directions panel */
       .mc-panel-body { padding: 4px 6px 6px; }
-      .dir-input-wrap input { font-size: 12px; }
-      .step-item { font-size: 11px; }
-
-      :root { --ft: 14px; --fc: 20px; }
+      .dir-input-wrap input { font-size: 11px; }
+      .step-item { font-size: 10px; }
 
       /* Pause menu */
       #settings-body { width: 90vw; }
       .mc-btn { font-size: 12px; padding: 10px 0; }
       #settings-title { font-size: 18px; }
 
-      /* Attribution */
-      .leaflet-control-attribution { margin-bottom: 14px !important; margin-right: 10px !important; font-size: 8px !important; }
+      /* Attribution hidden globally */
 
       /* Title screen */
       #title-logo { width: 80%; margin-top: 8%; }
@@ -1091,6 +1077,7 @@
       .mc-menu-btn { font-size: 14px; padding: 8px 0 10px 0; outline-width: 2px; }
       .mc-menu-row { gap: 6px; }
       #title-footer { font-size: 8px; padding: 4px 8px; }
+      #title-socials .social-link svg { width: 14px; height: 14px; }
 
       /* Auth */
       #auth-title { font-size: 16px; }
@@ -1104,16 +1091,26 @@
       #loading-bar-wrap { width: 80vw; }
     }
 
-    /* Extra small screens */
+    /* Extra small screens — frame safety: --ft (10px) + 4px = 14px */
     @media (max-width: 480px) {
-      #search-panel { top: 8px; left: 4px; right: 4px; }
-      #controls { top: 8px; right: 4px; }
-      .ctrl-btn { font-size: 8px; padding: 4px 6px; }
-      #toolbar { right: 4px; bottom: 60px; }
-      .toolbar-slot { width: 38px; height: 38px; }
-      #clock-hud { left: 4px; }
-      #coords { font-size: 8px; }
       :root { --ft: 10px; --fc: 14px; }
+      #controls { display: none; }
+      #search-panel { top: 12px; left: 14px; right: 14px; }
+      #search-input { font-size: 12px; padding: 7px 8px; }
+      #nav-map-toggle { top: 12px; left: 14px; width: 30px; height: 30px; }
+      #social-btns { right: 14px; }
+      .social-btn { width: 30px; height: 30px; font-size: 12px; }
+      .social-btn svg { width: 14px; height: 14px; }
+      #toolbar { right: 14px; bottom: 44px; padding: 2px; }
+      .toolbar-slot { width: 30px; height: 30px; font-size: 14px; }
+      .toolbar-slot svg { width: 14px; height: 14px; }
+      #clock-hud { bottom: 30px; left: 14px; gap: 4px; }
+      #mc-clock { width: 26px; height: 26px; }
+      #clock-time { font-size: 9px; }
+      #clock-weather { font-size: 7px; }
+      #coords { bottom: 12px; font-size: 7px; padding: 2px 6px; }
+      #nav-banner { bottom: 34px; }
+      #nav-compass { width: 38px; height: 38px; }
       #title-logo { width: 90%; margin-top: 12%; }
       .title-buttons { width: 92vw; }
       #splash-text { display: none; }
@@ -1225,14 +1222,8 @@
     <div class="frame-edge frame-er"></div>
   </div>
 
-  <!-- Unified top bar — settings + layer toggle -->
+  <!-- Layer toggle — desktop only -->
   <div id="controls">
-    <button id="settings-btn" onclick="openSettings()" title="Settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-        <path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/>
-        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-      </svg>
-    </button>
     <button class="ctrl-btn active" id="btn-mc" onclick="setView('mc')">Minecraft</button>
     <button class="ctrl-btn" id="btn-sat" onclick="setView('sat')">Satellite</button>
     <button class="ctrl-btn" id="btn-roads" onclick="setView('roads')">Roads</button>
@@ -1286,6 +1277,19 @@
   <!-- Right toolbar — inventory hotbar -->
   <!-- Social buttons — middle-right -->
   <div id="social-btns">
+    <button id="settings-btn" class="social-btn" onclick="openSettings()" data-tip="Settings">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2" style="image-rendering:auto">
+        <path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/>
+        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+    </button>
+    <button id="layer-cycle-btn" class="social-btn" onclick="cycleView()" data-tip="Map Layer">
+      <svg viewBox="0 0 16 16" width="20" height="20" fill="#fff" style="image-rendering:pixelated">
+        <path d="M8 1L1 5.5L8 10L15 5.5L8 1Z" opacity="0.9"/>
+        <path d="M1 8l7 4.5L15 8" fill="none" stroke="#fff" stroke-width="1.5"/>
+        <path d="M1 10.5l7 4.5 7-4.5" fill="none" stroke="#fff" stroke-width="1.5" opacity="0.6"/>
+      </svg>
+    </button>
     <button id="chat-btn" class="social-btn" onclick="toggleChat()" data-tip="Chat">
       <svg viewBox="0 0 16 16" width="20" height="20" style="image-rendering:pixelated">
         <rect x="3" y="2" width="10" height="1" fill="#ddd"/>
@@ -1730,20 +1734,32 @@
       localStorage.setItem('mc-last-location', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
     });
 
-    const mcLayer = L.tileLayer('/tiles/{z}/{x}/{y}.png?v=' + Date.now(), { minNativeZoom: 16, maxNativeZoom: 16, minZoom: 2, maxZoom: 18, crossOrigin: 'anonymous', attribution: 'Minecraft Map | &copy; OSM', keepBuffer: 10, updateWhenZooming: false });
-    const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: '&copy; Esri' });
-    const roadsLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OSM' });
+    const mcLayer = L.tileLayer('/tiles/{z}/{x}/{y}.png?v=' + Date.now(), { minNativeZoom: 16, maxNativeZoom: 16, minZoom: 2, maxZoom: 18, crossOrigin: 'anonymous', keepBuffer: 10, updateWhenZooming: false });
+    const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
+    const roadsLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
     let activeLayer = mcLayer;
     mcLayer.addTo(map);
+
+    const viewModes = ['mc', 'sat', 'roads'];
+    let currentViewIdx = 0;
 
     function setView(mode) {
       SFX.play('click', 0.4, 0.9 + Math.random() * 0.2);
       map.removeLayer(activeLayer);
       document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
-      if (mode === 'mc') { activeLayer = mcLayer; document.getElementById('btn-mc').classList.add('active'); document.getElementById('map').style.imageRendering = 'pixelated'; }
-      else if (mode === 'sat') { activeLayer = satLayer; document.getElementById('btn-sat').classList.add('active'); document.getElementById('map').style.imageRendering = 'auto'; }
-      else { activeLayer = roadsLayer; document.getElementById('btn-roads').classList.add('active'); document.getElementById('map').style.imageRendering = 'auto'; }
+      if (mode === 'mc') { activeLayer = mcLayer; document.getElementById('btn-mc').classList.add('active'); document.getElementById('map').style.imageRendering = 'pixelated'; currentViewIdx = 0; }
+      else if (mode === 'sat') { activeLayer = satLayer; document.getElementById('btn-sat').classList.add('active'); document.getElementById('map').style.imageRendering = 'auto'; currentViewIdx = 1; }
+      else { activeLayer = roadsLayer; document.getElementById('btn-roads').classList.add('active'); document.getElementById('map').style.imageRendering = 'auto'; currentViewIdx = 2; }
       activeLayer.addTo(map);
+      // Update cycle button label
+      var labels = { mc: 'MC', sat: 'SAT', roads: 'RD' };
+      var btn = document.getElementById('layer-cycle-btn');
+      if (btn) btn.setAttribute('data-tip', viewModes[(currentViewIdx + 1) % 3].charAt(0).toUpperCase() + viewModes[(currentViewIdx + 1) % 3].slice(1));
+    }
+
+    function cycleView() {
+      currentViewIdx = (currentViewIdx + 1) % viewModes.length;
+      setView(viewModes[currentViewIdx]);
     }
 
     map.on('mousemove', e => {
