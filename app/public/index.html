@@ -267,26 +267,62 @@
     }
 
     /* Coords bar — HUD overlay, bottom center */
-    /* XP bar — Minecraft-style, above coords */
-    #xp-bar {
-      position: absolute; bottom: 48px; left: 50%; transform: translateX(-50%);
-      z-index: 1000; width: 182px; height: 5px;
-      background: #1e1e1e;
-      box-shadow: inset 1px 1px 0 #0a0a0a, inset -1px -1px 0 #333;
+    /* Player badge — top-left under search */
+    #player-badge {
+      position: absolute; top: 60px; left: 40px; z-index: 1000;
+      display: none; cursor: pointer;
+      background: var(--panel-bg); border: 3px solid var(--panel-border);
+      box-shadow: inset 2px 2px 0 var(--panel-hi), inset -2px -2px 0 var(--slot-bg);
+      padding: 4px 10px 4px 8px;
+      font-family: 'Minecraft', monospace; font-size: 11px;
+      color: #3f3f3f; text-shadow: 1px 1px 0 rgba(255,255,255,0.3);
     }
-    #xp-fill {
+    #player-badge:hover { background: #a0a0a0; }
+    #player-badge .badge-name { color: #3f3f3f; }
+    #player-badge .badge-level { color: #80ff20; font-size: 10px; text-shadow: 1px 1px 0 #2a2a2a; margin-left: 6px; }
+
+    /* Stats panel */
+    #stats-panel {
+      display: none; position: absolute; top: 60px; left: 40px; z-index: 1500;
+      width: 280px;
+      background: var(--panel-bg); border: 3px solid var(--panel-border);
+      box-shadow: inset 2px 2px 0 var(--panel-hi), inset -2px -2px 0 var(--slot-bg),
+                  2px 4px 0 rgba(0,0,0,0.4);
+      font-family: 'Minecraft', monospace;
+    }
+    #stats-panel.open { display: block; }
+    .stats-header {
+      text-align: center; padding: 8px 8px 4px;
+      font-size: 13px; color: #3f3f3f;
+      text-shadow: 1px 1px 0 rgba(255,255,255,0.3);
+    }
+    .stats-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px 12px; font-size: 10px; color: #555;
+    }
+    .stats-row .stats-val { color: #3f3f3f; font-size: 11px; }
+    .stats-xp-wrap {
+      margin: 6px 12px; height: 10px;
+      background: repeating-linear-gradient(90deg, #0d0d0d 0px, #0d0d0d 14px, #1a1a1a 14px, #1a1a1a 16px);
+      border-top: 2px solid #222; border-bottom: 2px solid #050505;
+      position: relative;
+    }
+    .stats-xp-fill {
       height: 100%; width: 0%;
-      background: #80ff20;
-      box-shadow: inset 0 -1px 0 #4ca80e;
-      transition: width 0.5s ease;
+      background: repeating-linear-gradient(90deg, #80ff20 0px, #80ff20 14px, #6ad414 14px, #6ad414 16px);
+      box-shadow: inset 0 -2px 0 #4a9e0e, inset 0 2px 0 #a0ff50;
+      transition: width 0.3s ease;
     }
-    #xp-level {
-      position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%);
-      z-index: 1001;
-      font-family: 'Minecraft', monospace; font-size: 10px;
-      color: #80ff20;
-      text-shadow: 1px 1px 0 #1a1a1a, -1px -1px 0 #1a1a1a, 1px -1px 0 #1a1a1a, -1px 1px 0 #1a1a1a;
+    .stats-xp-label {
+      text-align: center; font-size: 9px; color: #80ff20; padding: 2px 0 6px;
+      text-shadow: 1px 1px 0 #2a2a2a;
     }
+    .stats-close {
+      text-align: center; padding: 6px;
+      font-size: 10px; color: #3f3f3f; cursor: pointer;
+      border-top: 1px solid #aaa;
+    }
+    .stats-close:hover { color: #000; }
     #coords {
       position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
       z-index: 1000; padding: 4px 12px;
@@ -1101,8 +1137,8 @@
 
       /* Coords — readable, centered, clears bottom frame */
       #coords { bottom: 20px; font-size: 11px; padding: 4px 12px; max-width: 70vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      #xp-bar { bottom: 38px; width: 160px; }
-      #xp-level { bottom: 42px; font-size: 9px; }
+      #player-badge { top: 56px; left: 22px; font-size: 10px; padding: 3px 8px; }
+      #stats-panel { top: 56px; left: 22px; right: 22px; width: auto; }
 
       /* Friends & Journal panels — full-width bottom sheet, clears frame */
       #friends-panel, #journal-panel { top: auto; bottom: 60px; left: 22px; right: 22px; width: auto; transform: none; }
@@ -1227,8 +1263,8 @@
 
       /* Coords — clears bottom frame */
       #coords { bottom: 16px; font-size: 10px; padding: 3px 10px; }
-      #xp-bar { bottom: 34px; width: 140px; }
-      #xp-level { bottom: 38px; font-size: 8px; }
+      #player-badge { top: 50px; left: 18px; font-size: 9px; padding: 3px 6px; }
+      #stats-panel { top: 50px; left: 18px; right: 18px; width: auto; }
 
       /* Nav banner */
       #nav-banner { bottom: 38px; }
@@ -1396,6 +1432,23 @@
     </div>
   </div>
 
+  <!-- Player badge — shows name + level -->
+  <div id="player-badge" onclick="toggleStats()">
+    <span class="badge-name" id="badge-name">Steve</span>
+    <span class="badge-level" id="badge-level">Lv 0</span>
+  </div>
+
+  <!-- Stats panel -->
+  <div id="stats-panel">
+    <div class="stats-header" id="stats-name">Steve</div>
+    <div class="stats-row"><span>Level</span><span class="stats-val" id="stats-level">0</span></div>
+    <div class="stats-xp-wrap"><div class="stats-xp-fill" id="stats-xp-fill"></div></div>
+    <div class="stats-xp-label" id="stats-xp-label">0 / 7 XP</div>
+    <div class="stats-row"><span>Blocks Traveled</span><span class="stats-val" id="stats-blocks">0</span></div>
+    <div class="stats-row"><span>Achievements</span><span class="stats-val" id="stats-achievements">0 / 0</span></div>
+    <div class="stats-close" onclick="toggleStats()">Close</div>
+  </div>
+
   <div id="portal-overlay"></div>
   <div id="achievement-container"></div>
 
@@ -1515,10 +1568,6 @@
       <div id="clock-weather"><span id="weather-icon"></span><span id="weather-text">--</span></div>
     </div>
   </div>
-
-  <!-- XP bar — above coords -->
-  <div id="xp-level">0</div>
-  <div id="xp-bar"><div id="xp-fill"></div></div>
 
   <!-- Coords — HUD overlay, bottom-center -->
   <div id="coords">X: 0, Z: 0</div>
@@ -2544,6 +2593,7 @@
     var _origUpdateTitle = updateTitleForPlayer;
     updateTitleForPlayer = function() {
       _origUpdateTitle();
+      updatePlayerBadge();
       if (currentPlayer && !ws) connectWS();
       if (currentPlayer) refreshFriends();
     };
@@ -2890,8 +2940,41 @@
     function updateXPBar() {
       var needed = xpForLevel(xpState.level);
       var pct = Math.min(100, (xpState.xp / needed) * 100);
-      document.getElementById('xp-fill').style.width = pct + '%';
-      document.getElementById('xp-level').textContent = xpState.level;
+      // Update badge
+      document.getElementById('badge-level').textContent = 'Lv ' + xpState.level;
+      // Update stats panel if open
+      document.getElementById('stats-level').textContent = xpState.level;
+      document.getElementById('stats-xp-fill').style.width = pct + '%';
+      document.getElementById('stats-xp-label').textContent = xpState.xp + ' / ' + needed + ' XP';
+      document.getElementById('stats-blocks').textContent = xpState.totalBlocks.toLocaleString();
+      var earned = Object.keys(achievementsEarned).length;
+      document.getElementById('stats-achievements').textContent = earned + ' / ' + ALL_ACHIEVEMENTS.length;
+    }
+
+    function updatePlayerBadge() {
+      var badge = document.getElementById('player-badge');
+      if (currentPlayer) {
+        document.getElementById('badge-name').textContent = currentPlayer.playerName;
+        document.getElementById('stats-name').textContent = currentPlayer.playerName;
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+      updateXPBar();
+    }
+
+    function toggleStats() {
+      SFX.play('click', 0.4);
+      var panel = document.getElementById('stats-panel');
+      var badge = document.getElementById('player-badge');
+      if (panel.classList.contains('open')) {
+        panel.classList.remove('open');
+        badge.style.display = currentPlayer ? '' : 'none';
+      } else {
+        updateXPBar();
+        panel.classList.add('open');
+        badge.style.display = 'none';
+      }
     }
 
     function trackGPSDistance(lat, lng) {
@@ -3401,6 +3484,7 @@
       xpState = { totalBlocks: 0, xp: 0, level: 0 };
       localStorage.removeItem('mc-xp');
       updateXPBar();
+      updatePlayerBadge();
       SFX.play('levelup', 0.3);
       showAchievement('Reset Complete', 'All achievements & XP cleared', '/icons/dirt.png');
     }
@@ -4215,7 +4299,7 @@
     // Initialize clock + weather
     updateClock();
     setInterval(updateClock, 30000); // update clock every 30s
-    updateXPBar(); // initialize XP bar on load
+    updateXPBar(); // initialize XP/stats on load
     fetchWeather();
     setInterval(fetchWeather, 300000); // refresh weather every 5 min
     map.on('moveend', () => { clearTimeout(window._weatherDebounce); window._weatherDebounce = setTimeout(fetchWeather, 5000); });

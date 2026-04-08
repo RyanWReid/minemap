@@ -12,17 +12,20 @@ Real OpenStreetMap data -- roads, buildings, parks, water, forests -- transforme
 
 ![Map View](screenshots/map-view.png)
 
-### How Tiles Are Rendered
+### How Tiles Are Rendered (V2 Pipeline)
 
-Each 256px tile goes through a five-stage pipeline:
+Each 256px tile goes through a collect-then-decide pipeline:
 
-1. **Fetch** -- pull vector tiles, building footprints, roads, and elevation for the tile's bounding box
-2. **Classify** -- rasterize features into a semantic map (water, road, building, forest, park, etc.)
-3. **Heightmap** -- decode Terrarium elevation into Minecraft Y levels
-4. **Voxelize** -- place blocks column-by-column: surface, subsurface, trees, building extrusion, water fill
-5. **Render** -- top-down orthographic render with Minecraft-style north-face shading for depth
+1. **Fetch** -- pull vector tiles, building footprints, roads, elevation, and satellite imagery in parallel from 5 data sources
+2. **Collect votes** -- each source votes on what every pixel should be (water, road, building, forest, etc.) independently
+3. **Resolve** -- a two-key resolver picks the winner per pixel: feature priority (what it IS) first, source trust as tiebreaker
+4. **Downsample** -- majority-vote downsampling from 4096 to 1024 with thin feature preservation (roads and paths survive)
+5. **Heightmap** -- decode Terrarium elevation into Minecraft Y levels
+6. **Voxelize** -- place blocks column-by-column: surface, subsurface, trees, building extrusion, water fill
+7. **Color sample** -- satellite imagery matched to nearest Minecraft block for realistic roof/road colors
+8. **Render** -- top-down orthographic render with Minecraft-style north-face shading for depth
 
-Cold tiles render in ~3-6 seconds. Cached tiles are instant.
+Cold tiles render in ~4-15 seconds. Cached tiles are instant.
 
 The pipeline recognizes **24 terrain types** including water, grass, forest, farmland, sand, rock, snow, roads, buildings, parking, railway, wetland, parks, pools, sports pitches, playgrounds, dirt paths, and more. **Biome-aware palettes** adapt block choices based on latitude and elevation -- Mediterranean, temperate, arid, arctic, etc.
 
@@ -134,6 +137,7 @@ Fully responsive design built for touch. 44px touch targets, Safari-safe viewpor
 | [VersaTiles](https://versatiles.org) | Base vector tiles (roads, land use, water) |
 | [Overpass API](https://overpass-api.de) | Complete OSM buildings, roads, paths, land features |
 | [Overture Maps](https://overturemaps.org) | Microsoft AI building footprints (fills OSM gaps -- 2.6B buildings worldwide) |
+| [Esri World Imagery](https://server.arcgisonline.com) | Satellite imagery for roof color sampling and ground refinement |
 | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) | Real elevation data (Terrarium encoding) |
 | [Photon](https://photon.komoot.io) | Place search & geocoding |
 | [OSRM](http://project-osrm.org) | Driving directions & routing |
