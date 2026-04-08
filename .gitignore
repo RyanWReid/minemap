@@ -5,4 +5,7 @@ pipeline/tile-cache/
 pipeline/overpass-cache/
 *.png
 !public/**/*.png
+*.db
+*.db-wal
+*.db-shm
 .DS_Store

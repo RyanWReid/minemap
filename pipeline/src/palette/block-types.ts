@@ -53,6 +53,8 @@ export const BLOCKS: Record<string, BlockType> = {
   gray_concrete:    { id: 'minecraft:gray_concrete',    name: 'Gray Concrete',    mapColor: [76, 76, 76],    category: 'road' },
   light_gray_concrete: { id: 'minecraft:light_gray_concrete', name: 'Light Gray Concrete', mapColor: [153, 153, 153], category: 'road' },
   black_concrete:   { id: 'minecraft:black_concrete',   name: 'Black Concrete',   mapColor: [25, 25, 25],    category: 'road' },
+  green_concrete:   { id: 'minecraft:green_concrete',   name: 'Green Concrete',   mapColor: [73, 91, 36],    category: 'road' },
+  white_concrete:   { id: 'minecraft:white_concrete',   name: 'White Concrete',   mapColor: [230, 230, 230], category: 'structure' },
 
   // Structure blocks
   stone_bricks:     { id: 'minecraft:stone_bricks',     name: 'Stone Bricks',     mapColor: [112, 112, 112], category: 'structure' },
@@ -101,6 +103,13 @@ export const BLOCKS: Record<string, BlockType> = {
   glass_pane:       { id: 'minecraft:glass_pane',       name: 'Glass Pane',       mapColor: [175, 213, 228], category: 'structure' },
 
   rail:             { id: 'minecraft:rail',             name: 'Rail',             mapColor: [100, 80, 50],   category: 'decoration' },
+
+  // Lane markings & detail blocks
+  yellow_concrete:  { id: 'minecraft:yellow_concrete',  name: 'Yellow Concrete',  mapColor: [241, 175, 21],  category: 'road' },
+  white_carpet:     { id: 'minecraft:white_carpet',     name: 'White Carpet',     mapColor: [233, 236, 236], category: 'road' },
+  lily_pad:         { id: 'minecraft:lily_pad',         name: 'Lily Pad',         mapColor: [0, 124, 0],     category: 'vegetation' },
+  blue_ice:         { id: 'minecraft:blue_ice',         name: 'Blue Ice',         mapColor: [40, 40, 180],   category: 'water' },
+  dark_gray_concrete: { id: 'minecraft:gray_concrete',  name: 'Shadow Block',     mapColor: [40, 40, 40],    category: 'structure' },
 };
 
 // ============================================
@@ -128,8 +137,8 @@ export const COLUMN_RULES: Record<SemanticClass, ColumnRule> = {
   [SemanticClass.INDUSTRIAL]:       { surface: 'minecraft:smooth_stone',     subsurface: 'minecraft:stone',   depth: 1, base: 'minecraft:stone' },
   [SemanticClass.RESIDENTIAL_ZONE]: { surface: 'minecraft:grass_block',      subsurface: 'minecraft:dirt',    depth: 3, base: 'minecraft:stone' },
   [SemanticClass.POOL]:             { surface: 'minecraft:water',            subsurface: 'minecraft:quartz_block', depth: 1, base: 'minecraft:stone', fillToSeaLevel: true },
-  [SemanticClass.SPORTS_PITCH]:     { surface: 'minecraft:terracotta',       subsurface: 'minecraft:dirt',    depth: 2, base: 'minecraft:stone' },
+  [SemanticClass.SPORTS_PITCH]:     { surface: 'minecraft:green_concrete',   subsurface: 'minecraft:dirt',    depth: 2, base: 'minecraft:stone' },
   [SemanticClass.PLAYGROUND]:       { surface: 'minecraft:sand',             subsurface: 'minecraft:dirt',    depth: 2, base: 'minecraft:stone' },
-  [SemanticClass.SCHOOL]:           { surface: 'minecraft:smooth_stone',     subsurface: 'minecraft:stone',   depth: 1, base: 'minecraft:stone', extrude: true },
+  [SemanticClass.SCHOOL]:           { surface: 'minecraft:grass_block',      subsurface: 'minecraft:dirt',    depth: 3, base: 'minecraft:stone' },
   [SemanticClass.PATH_DIRT]:        { surface: 'minecraft:dirt_path',        subsurface: 'minecraft:dirt',    depth: 2, base: 'minecraft:stone' },
 };

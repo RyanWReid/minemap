@@ -1,0 +1,3244 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minecraft Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    @font-face {
+      font-family: 'Minecraft';
+      src: url('/fonts/minecraft.woff2') format('woff2');
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Minecraft', monospace; background: #1a1a1a; }
+    #map {
+      width: 100vw; height: 100vh;
+      background: url('/icons/dirt.png') repeat;
+      background-size: 64px 64px;
+      image-rendering: pixelated;
+    }
+    .leaflet-tile { image-rendering: pixelated !important; }
+    .leaflet-container { background: url('/icons/dirt.png') repeat !important; background-size: 64px 64px !important; image-rendering: pixelated !important; }
+
+    /* Layer toggle - top right */
+    #controls {
+      position: absolute; top: 40px; right: 40px;
+      z-index: 1000; display: flex; gap: 0;
+    }
+    .ctrl-btn {
+      font-family: 'Minecraft', monospace; font-size: 11px;
+      padding: 6px 12px; border: 3px solid #555;
+      background: #6b6b6b; color: #aaa; cursor: pointer;
+      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
+    }
+    .ctrl-btn:not(:last-child) { border-right: none; }
+    .ctrl-btn.active {
+      background: #4a8c3f; color: #fff;
+      box-shadow: inset -2px -2px 0 #6ab35e, inset 2px 2px 0 #2d6324;
+    }
+    .ctrl-btn:hover:not(.active) { background: #888; }
+
+    /* Search panel - top left */
+    #search-panel {
+      position: absolute; top: 40px; left: 40px;
+      z-index: 1001; width: 360px;
+    }
+    #search-wrap { position: relative; }
+    #search-input {
+      font-family: 'Minecraft', monospace; font-size: 13px;
+      padding: 10px 14px; width: 100%; border: 3px solid #555;
+      background: #c6c6c6; color: #3f3f3f; outline: none;
+      box-shadow: inset 2px 2px 0 #8b8b8b, inset -2px -2px 0 #fff;
+    }
+    #search-input::placeholder { color: #7a7a7a; }
+    .ac-dropdown {
+      position: absolute; top: 100%; left: 0; right: 0;
+      z-index: 1002; background: #ddd; border: 3px solid #555; border-top: none;
+      max-height: 220px; overflow-y: auto;
+      box-shadow: 2px 4px 0 rgba(0,0,0,0.5);
+    }
+    .ac-item {
+      font-family: 'Minecraft', monospace; font-size: 10px;
+      padding: 8px 10px; color: #333; cursor: pointer;
+      border-bottom: 1px solid #bbb;
+    }
+    .ac-item:hover, .ac-item.sel { background: #4a8c3f; color: #fff; }
+    .ac-item .ac-sub { color: #777; font-size: 9px; display: block; margin-top: 2px; }
+    .ac-item:hover .ac-sub, .ac-item.sel .ac-sub { color: #cfc; }
+
+    /* Minecraft inventory-style panel base */
+    .mc-panel {
+      display: none; margin-top: 4px;
+      background: #c6c6c6; border: 4px solid; padding: 0;
+      border-color: #fff #555 #555 #fff;
+      box-shadow: 2px 4px 0 rgba(0,0,0,0.4);
+      image-rendering: pixelated;
+    }
+    .mc-panel.open { display: block; }
+    .mc-panel-title {
+      font-family: 'Minecraft', monospace; font-size: 11px;
+      color: #3f3f3f; padding: 6px 8px 4px; text-align: center;
+      text-shadow: 1px 1px 0 rgba(255,255,255,0.3);
+    }
+    .mc-panel-body { padding: 4px 8px 8px; }
+
+    /* Inventory slot - used for inputs and info boxes */
+    .mc-slot {
+      background: #8b8b8b; border: 2px solid;
+      border-color: #373737 #fff #fff #373737;
+      padding: 4px 6px; margin-bottom: 4px;
+    }
+
+    /* Place card - shows after selecting a search result */
+    #place-card { /* uses .mc-panel */ }
+    #place-name {
+      font-family: 'Minecraft', monospace;
+      color: #3f3f3f; font-size: 12px; margin-bottom: 2px;
+      text-shadow: 1px 1px 0 rgba(255,255,255,0.3);
+    }
+    #place-sub {
+      font-family: 'Minecraft', monospace;
+      color: #666; font-size: 9px; margin-bottom: 6px;
+    }
+    #place-actions { display: flex; gap: 4px; }
+    .place-btn {
+      font-family: 'Minecraft', monospace; font-size: 11px;
+      padding: 4px 10px; border: 3px solid; cursor: pointer;
+    }
+    #directions-btn {
+      background: #5a9c4f; color: #fff; flex: 1;
+      border-color: #7bc96a #2d6324 #2d6324 #7bc96a;
+      text-shadow: 1px 1px 0 #2d4a22;
+    }
+    #directions-btn:hover { background: #6ab35e; }
+    #directions-btn:active { border-color: #2d6324 #7bc96a #7bc96a #2d6324; }
+    #place-close-btn {
+      background: #8b8b8b; color: #3f3f3f;
+      border-color: #c6c6c6 #555 #555 #c6c6c6;
+    }
+    #place-close-btn:hover { background: #aaa; }
+
+    /* Directions panel */
+    #dir-panel { /* uses .mc-panel */ }
+    .dir-row { display: flex; gap: 4px; margin-bottom: 4px; align-items: center; position: relative; }
+
+    /* Waypoint icons - pixel blocks instead of dots */
+    .dir-icon {
+      width: 16px; height: 16px; flex-shrink: 0;
+      image-rendering: pixelated; position: relative;
+    }
+    .dir-icon::before {
+      content: ''; display: block; width: 12px; height: 12px;
+      margin: 2px; border: 2px solid;
+    }
+    .dir-icon.from::before { background: #5cb85c; border-color: #3d7a3d #8ade8a #8ade8a #3d7a3d; }
+    .dir-icon.to::before { background: #c9302c; border-color: #8b2020 #e87472 #e87472 #8b2020; }
+    .dir-icon.stop::before { background: #d4a017; border-color: #9a7412 #f0cc5b #f0cc5b #9a7412; }
+
+    /* Connector line between waypoints */
+    .dir-row:not(:last-of-type) .dir-icon::after {
+      content: ''; position: absolute;
+      left: 7px; top: 16px; width: 2px; height: 8px;
+      background: #555;
+    }
+
+    .dir-input-wrap { flex: 1; position: relative; }
+    .dir-input-wrap input {
+      font-family: 'Minecraft', monospace; font-size: 11px;
+      padding: 4px 6px; width: 100%;
+      background: #8b8b8b; color: #fff; outline: none;
+      border: 2px solid; border-color: #373737 #fff #fff #373737;
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.4);
+    }
+    .dir-input-wrap input::placeholder { color: #bbb; text-shadow: none; }
+    .dir-input-wrap input.resolved {
+      background: #5a7a52; color: #dfd;
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+    }
+    .dir-remove {
+      font-family: 'Minecraft', monospace; font-size: 12px; line-height: 1;
+      background: #8b8b8b; color: #555; border: 2px solid;
+      border-color: #c6c6c6 #555 #555 #c6c6c6;
+      cursor: pointer; width: 18px; height: 18px; flex-shrink: 0;
+      text-align: center; padding: 0;
+    }
+    .dir-remove:hover { background: #c94040; color: #fff; border-color: #e87472 #8b2020 #8b2020 #e87472; }
+    #dir-actions { display: flex; gap: 4px; margin-top: 6px; }
+    .dir-btn {
+      font-family: 'Minecraft', monospace; font-size: 10px;
+      padding: 4px 8px; border: 3px solid; cursor: pointer;
+    }
+    #dir-swap {
+      background: #8b8b8b; color: #3f3f3f;
+      border-color: #c6c6c6 #555 #555 #c6c6c6;
+    }
+    #dir-swap:hover { background: #aaa; }
+    #dir-add-stop {
+      background: #8b8b8b; color: #3f3f3f;
+      border-color: #c6c6c6 #555 #555 #c6c6c6;
+    }
+    #dir-add-stop:hover { background: #aaa; }
+    #dir-close {
+      background: #c94040; color: #fff;
+      border-color: #e87472 #8b2020 #8b2020 #e87472;
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.4);
+    }
+    #dir-close:hover { background: #d44; }
+    #dir-info {
+      font-family: 'Minecraft', monospace; font-size: 11px; color: #3f3f3f;
+      margin-top: 6px; display: none; text-align: center;
+      background: #8b8b8b; border: 2px solid;
+      border-color: #373737 #fff #fff #373737;
+      padding: 6px;
+      text-shadow: 1px 1px 0 rgba(255,255,255,0.2);
+    }
+    #dir-steps {
+      display: none; max-height: 150px; overflow-y: auto; margin-top: 6px;
+      border-top: 2px solid #444;
+    }
+    #dir-steps.open { display: block; }
+    #dir-steps-toggle {
+      display: none; margin-top: 4px; padding: 4px 0;
+      font-family: 'Minecraft', monospace; font-size: 10px;
+      color: #888; text-align: center; cursor: pointer;
+      border-top: 1px solid #555;
+    }
+    #dir-steps-toggle:hover { color: #fff; }
+    #dir-steps-toggle.open { display: block; }
+    .step-item {
+      font-family: 'Minecraft', monospace; font-size: 10px; color: #ccc;
+      padding: 6px 8px; border-bottom: 1px solid #333;
+      display: flex; gap: 6px; align-items: flex-start; cursor: pointer;
+    }
+    .step-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
+    .step-item.active { background: #4a8c3f; color: #fff; }
+    .step-item.active .step-num, .step-item.active .step-dist { color: #cfc; }
+    .step-num { color: #888; min-width: 16px; text-align: right; flex-shrink: 0; }
+    .step-text { flex: 1; }
+    .step-dist { color: #666; flex-shrink: 0; font-size: 9px; }
+    #nav-start-btn {
+      font-family: 'Minecraft', monospace; font-size: 11px;
+      padding: 6px 0; border: 2px solid #555; cursor: pointer; width: 100%;
+      background: #4a8c3f; color: #fff; margin-top: 6px; text-align: center;
+      box-shadow: inset 1px 1px 0 #6ab35e, inset -1px -1px 0 #2d6324;
+    }
+    #nav-start-btn:hover { background: #5a9c4f; }
+    #nav-start-btn.navigating { background: #8b3333; }
+    #nav-start-btn.navigating:hover { background: #a33; }
+
+    /* Navigation HUD banner */
+    #nav-banner {
+      display: none; position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+      z-index: 1002; background: rgba(0,0,0,0.85); border: 3px solid #555;
+      padding: 12px 20px; min-width: 300px; max-width: 500px; text-align: center;
+      box-shadow: inset 2px 2px 0 #444, inset -2px -2px 0 #222;
+    }
+    #nav-banner.open { display: block; }
+    #nav-direction {
+      font-family: 'Minecraft', monospace; font-size: 16px; color: #fff;
+      margin-bottom: 4px;
+    }
+    #nav-distance {
+      font-family: 'Minecraft', monospace; font-size: 11px; color: #7f7;
+    }
+
+    /* Coords bar */
+    #coords {
+      position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+      z-index: 1000; font-family: 'Minecraft', monospace; font-size: 12px;
+      color: #fff; background: rgba(0,0,0,0.7); padding: 6px 14px; border: 2px solid #555;
+    }
+    .leaflet-control-zoom a {
+      font-family: 'Minecraft', monospace !important;
+      background: #8b8b8b !important; border: 2px solid #555 !important;
+      color: #fff !important;
+    }
+    .leaflet-control-attribution {
+      font-family: 'Minecraft', monospace !important; font-size: 10px !important;
+      background: rgba(0,0,0,0.6) !important; color: #aaa !important;
+      margin-bottom: 26px !important; margin-right: 28px !important;
+    }
+
+    .player-marker {
+      image-rendering: pixelated;
+      transition: transform 0.3s ease;
+    }
+    .leaflet-control-zoom { margin-bottom: 40px !important; margin-right: 32px !important; }
+    #locate-btn {
+      position: absolute; bottom: 140px; right: 32px; z-index: 1000;
+      width: 34px; height: 34px; border: 2px solid #555;
+      background: #6b6b6b; cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
+    }
+    #locate-btn:hover { background: #888; }
+    #locate-btn.active { background: #4a8c3f; }
+    #locate-btn svg { width: 18px; height: 18px; }
+
+    /* Minecraft map 8-slice frame */
+    .map-frame { position: fixed; inset: 0; z-index: 998; pointer-events: none; }
+    .map-frame * { position: fixed; image-rendering: pixelated; }
+    :root { --ft: 24px; --fc: 36px; }
+    .frame-corner { width: var(--fc); height: var(--fc); background-size: contain; }
+    .frame-ctl { top: 0; left: 0; background-image: url('/frame/corner-tl.png'); }
+    .frame-ctr { top: 0; right: 0; background-image: url('/frame/corner-tr.png'); }
+    .frame-cbl { bottom: 0; left: 0; background-image: url('/frame/corner-bl.png'); }
+    .frame-cbr { bottom: 0; right: 0; background-image: url('/frame/corner-br.png'); }
+    .frame-edge { background-repeat: repeat; }
+    .frame-et { top: 0; left: var(--fc); right: var(--fc); height: var(--ft); background-image: url('/frame/edge-top.png'); background-size: auto 100%; }
+    .frame-eb { bottom: 0; left: var(--fc); right: var(--fc); height: var(--ft); background-image: url('/frame/edge-bottom.png'); background-size: auto 100%; }
+    .frame-el { top: var(--fc); bottom: var(--fc); left: 0; width: var(--ft); background-image: url('/frame/edge-left.png'); background-size: 100% auto; background-repeat: repeat-y; }
+    .frame-er { top: var(--fc); bottom: var(--fc); right: 0; width: var(--ft); background-image: url('/frame/edge-right.png'); background-size: 100% auto; background-repeat: repeat-y; }
+
+    /* POI markers — map pin with icon inside */
+    .poi-marker { text-align: center; pointer-events: auto; overflow: visible !important; cursor: pointer; }
+    .leaflet-marker-icon.poi-marker { overflow: visible !important; }
+    .poi-pin {
+      position: relative; width: 28px; height: 36px; margin: 0 auto;
+    }
+    .poi-pin canvas { image-rendering: pixelated; display: block; }
+    .poi-label {
+      font-family: 'Minecraft', monospace; font-size: 9px; color: #fff;
+      background: rgba(0,0,0,0.5); padding: 2px 5px; margin-top: 2px;
+      white-space: nowrap; text-align: center;
+      line-height: 1; letter-spacing: 0.5px;
+      text-shadow: 1px 1px 0 rgba(0,0,0,0.7);
+      display: none; position: absolute; left: 50%; transform: translateX(-50%);
+    }
+    .poi-marker:hover .poi-label { display: block; }
+    .poi-marker:hover .poi-pin { transform: scale(1.15); }
+
+    #poi-toggle {
+      position: absolute; bottom: 180px; right: 32px; z-index: 1000;
+      width: 34px; height: 34px; border: 2px solid #555;
+      background: #6b6b6b; cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
+      image-rendering: pixelated;
+    }
+    #poi-toggle:hover { background: #888; }
+    #poi-toggle.active { background: #4a8c3f; }
+    #poi-toggle img { width: 20px; height: 20px; image-rendering: pixelated; }
+
+    /* Home/spawn button */
+    #home-btn {
+      position: absolute; bottom: 210px; right: 32px; z-index: 1000;
+      width: 34px; height: 34px; border: 2px solid #555;
+      background: #6b6b6b; cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
+      font-size: 18px;
+    }
+    #home-btn:hover { background: #888; }
+
+    /* Help button */
+    #help-btn {
+      position: absolute; bottom: 250px; right: 32px; z-index: 1000;
+      width: 34px; height: 34px; border: 2px solid #555;
+      background: #6b6b6b; cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
+      font-family: 'Minecraft', monospace; font-size: 16px;
+      color: #fff; text-shadow: 1px 1px 0 #333;
+    }
+    #help-btn:hover { background: #888; }
+
+    /* Help overlay */
+    #help-overlay {
+      display: none; position: fixed; inset: 0; z-index: 2500;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      flex-direction: column; align-items: center; justify-content: center;
+      font-family: 'Minecraft', monospace; color: #fff;
+      text-shadow: 2px 2px 0 #3f3f3f;
+    }
+    #help-overlay.open { display: flex; }
+    #help-title {
+      font-size: 20px; margin-bottom: 20px; letter-spacing: 1px;
+    }
+    #help-body {
+      width: 420px; max-width: 90vw;
+      background: rgba(0,0,0,0.5); border: 2px solid #555;
+      padding: 16px 20px;
+    }
+    .help-section {
+      margin-bottom: 12px;
+    }
+    .help-section-title {
+      color: #ffff55; font-size: 13px; margin-bottom: 6px;
+    }
+    .help-row {
+      display: flex; justify-content: space-between;
+      font-size: 11px; color: #ccc; padding: 2px 0;
+    }
+    .help-key {
+      color: #7fff7f;
+      background: rgba(255,255,255,0.08);
+      padding: 1px 6px; min-width: 30px; text-align: center;
+    }
+    #home-btn.has-home { background: #8b3333; }
+    #home-btn.has-home:hover { background: #a34; }
+
+    /* Nether portal transition */
+    #portal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 3000;
+      pointer-events: none;
+      background: url('/icons/portal_texture.gif') repeat;
+      background-size: 256px 256px;
+      image-rendering: pixelated;
+      animation: portalAnim 1.4s ease-in-out;
+    }
+    #portal-overlay.active { display: block; }
+    @keyframes portalAnim {
+      0% { opacity: 0; }
+      12% { opacity: 0.85; }
+      85% { opacity: 0.85; }
+      100% { opacity: 0; }
+    }
+
+    /* Settings cog button */
+    #settings-btn {
+      position: absolute; top: 40px; right: 280px; z-index: 1000;
+      width: 34px; height: 34px; border: 2px solid #555;
+      background: #6b6b6b; cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
+    }
+    #settings-btn:hover { background: #888; }
+    #settings-btn svg { width: 20px; height: 20px; }
+
+    /* ===== PAUSE MENU OVERLAY — authentic Minecraft style ===== */
+    #settings-overlay {
+      display: none; position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      flex-direction: column; align-items: center; justify-content: center;
+    }
+    #settings-overlay.open { display: flex; }
+
+    #settings-title {
+      font-family: 'Minecraft', monospace; font-size: 20px;
+      color: #fff; text-align: center; margin-bottom: 24px;
+      text-shadow: 2px 2px 0 #3f3f3f;
+      letter-spacing: 1px;
+    }
+
+    #settings-body {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 4px; width: 400px; max-width: 90vw;
+    }
+
+    /* Stone button — Minecraft's real button style */
+    .mc-btn {
+      font-family: 'Minecraft', monospace; font-size: 13px;
+      width: 100%; padding: 8px 0; text-align: center;
+      color: #e0e0e0; cursor: pointer; position: relative;
+      background: #737373; border: 3px solid;
+      border-color: #9e9e9e #505050 #505050 #9e9e9e;
+      text-shadow: 2px 2px 0 #3f3f3f;
+      letter-spacing: 0.5px;
+      image-rendering: pixelated;
+      box-sizing: border-box;
+    }
+    .mc-btn:hover {
+      background: #859985;
+      border-color: #a7bda7 #596e59 #596e59 #a7bda7;
+      color: #ffffa0;
+    }
+    .mc-btn:active {
+      background: #606060;
+      border-color: #505050 #9e9e9e #9e9e9e #505050;
+    }
+    .mc-btn .btn-val { color: #7fff7f; }
+    .mc-btn .btn-val.off { color: #ff7f7f; }
+
+    /* Half-width button pair row */
+    .mc-btn-row { display: flex; gap: 4px; width: 100%; }
+    .mc-btn-row .mc-btn { flex: 1; font-size: 11px; padding: 7px 0; }
+
+    /* Spacer */
+    .mc-btn-spacer { height: 12px; }
+
+    /* Slider button — Minecraft volume/brightness style */
+    .mc-slider-wrap {
+      width: 100%; height: 34px; position: relative;
+      background: #555; border: 3px solid;
+      border-color: #373737 #2a2a2a #2a2a2a #373737;
+      cursor: pointer; overflow: hidden; box-sizing: border-box;
+    }
+    .mc-slider-fill {
+      position: absolute; top: 0; left: 0; bottom: 0;
+      background: #737373;
+      border-right: 2px solid #505050;
+      pointer-events: none;
+    }
+    .mc-slider-knob {
+      position: absolute; top: 0; bottom: 0; width: 8px;
+      background: #8b8b8b; border: 2px solid;
+      border-color: #c6c6c6 #555 #555 #c6c6c6;
+      z-index: 2; pointer-events: none;
+    }
+    .mc-slider-label {
+      position: absolute; inset: 0;
+      font-family: 'Minecraft', monospace; font-size: 12px;
+      color: #fff; text-shadow: 2px 2px 0 #3f3f3f;
+      display: flex; align-items: center; justify-content: center;
+      pointer-events: none; z-index: 3;
+    }
+
+    /* Cheats overlay — same style as settings */
+    #cheats-overlay {
+      display: none; position: fixed; inset: 0; z-index: 2001;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      flex-direction: column; align-items: center; justify-content: center;
+    }
+    #cheats-overlay.open { display: flex; }
+
+    /* Time-of-day overlay — dynamic lighting */
+    #night-overlay {
+      position: fixed; inset: 0; z-index: 997;
+      pointer-events: none; display: none;
+      transition: background 2s ease;
+    }
+    #night-overlay.on { display: block; }
+
+    /* Clock + weather HUD — bottom left */
+    #clock-hud {
+      position: absolute; bottom: 60px; left: 40px; z-index: 1000;
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(0,0,0,0.7); border: 2px solid #555;
+      padding: 6px 10px; font-family: 'Minecraft', monospace;
+    }
+    #mc-clock {
+      width: 32px; height: 32px; image-rendering: pixelated;
+    }
+    #clock-info {
+      display: flex; flex-direction: column; gap: 1px;
+    }
+    #clock-time {
+      color: #fff; font-size: 12px;
+      text-shadow: 1px 1px 0 #3f3f3f;
+    }
+    #clock-weather {
+      color: #aaa; font-size: 10px;
+    }
+    #weather-icon {
+      font-size: 14px; margin-right: 2px;
+    }
+
+    /* Gloomy overlay — fog + desaturation for rain */
+    #gloom-overlay {
+      position: fixed; inset: 0; z-index: 995;
+      pointer-events: none; opacity: 0;
+      background: rgba(140,150,165,0.3);
+      transition: opacity 2s ease;
+    }
+    #gloom-overlay.on { opacity: 1; }
+    body.gloom #map { filter: saturate(0.55) brightness(0.82); transition: filter 2s ease; }
+    body.snowy #map { filter: saturate(0.15) brightness(1.15) contrast(0.85); transition: filter 2s ease; }
+    body.snowy #gloom-overlay { background: rgba(200,210,230,0.2); }
+    body:not(.gloom):not(.snowy) #map { filter: none; transition: filter 2s ease; }
+
+    /* Rain/snow particle canvas */
+    #weather-canvas {
+      position: fixed; inset: 0; z-index: 996;
+      pointer-events: none; display: none;
+    }
+    #weather-canvas.on { display: block; }
+
+    /* ===== TITLE SCREEN — Classic MC 1.7 ===== */
+    #title-screen {
+      position: fixed; inset: 0; z-index: 5000;
+      text-align: center; overflow: hidden;
+      font-family: 'Minecraft', monospace;
+      color: #fff; text-shadow: 2px 2px 0 #383838;
+    }
+    #title-screen.hidden { display: none; }
+
+    /* Panorama — slow scroll, blurred like real MC */
+    #panorama-bg {
+      position: absolute; inset: -20px; /* overflow to hide blur edges */
+      image-rendering: auto;
+      background: #303030 url('/menu/panorama_strip.jpg') repeat-x 0 0;
+      background-size: auto 105%;
+      animation: panScroll 600s linear infinite;
+      filter: blur(6px);
+    }
+    @keyframes panScroll { 100% { background-position-x: -8000px; } }
+    /* Dark vignette overlay like real MC */
+    #panorama-vignette {
+      position: absolute; inset: 0; z-index: 1;
+      background: radial-gradient(ellipse at center, rgba(0,0,0,0.0) 0%, rgba(0,0,0,0.7) 100%);
+    }
+
+    /* Logo — top of screen, large */
+    #title-logo {
+      position: relative; z-index: 2;
+      margin-top: 3%;
+      width: 55%;
+      image-rendering: pixelated;
+    }
+    #title-edition {
+      position: relative; z-index: 2;
+      font-family: 'Minecraft', monospace;
+      font-size: clamp(10px, 1.2vw, 16px);
+      color: #aaa;
+      text-shadow: 2px 2px 0 #3f3f3f;
+      letter-spacing: 3px;
+      margin-top: -2px;
+    }
+
+    /* Splash text — positioned to right of logo, rotated yellow */
+    #splash-text {
+      position: absolute; z-index: 3;
+      top: 22%; right: 12%;
+      font-size: 2vw; color: #FFFF00;
+      text-shadow: 2px 2px 0 #3f3f00;
+      animation: splashPulse 0.5s ease-in-out infinite;
+      white-space: nowrap; pointer-events: none;
+    }
+    @keyframes splashPulse {
+      0%   { transform: scale(1) rotate(-20deg); }
+      50%  { transform: scale(1.06) rotate(-20deg); }
+      100% { transform: scale(1) rotate(-20deg); }
+    }
+
+    /* Button wrapper — centered in lower half */
+    .title-buttons {
+      position: relative; z-index: 2;
+      margin: 4vw auto 0;
+      width: 50vw; min-width: 300px; max-width: 520px;
+    }
+
+    /* Classic MC button — stone texture with black outline */
+    .mc-menu-btn {
+      display: block; width: 100%;
+      padding: 6px 0 8px 0;
+      margin: 0 auto 4px;
+      font-family: 'Minecraft', monospace;
+      font-size: clamp(11px, 1.4vw, 16px);
+      line-height: 1.3;
+      text-align: center; cursor: pointer;
+      color: #E0E0E0;
+      background: #7D7D7D url('/menu/button.png') no-repeat center;
+      background-size: 100% 100%;
+      border: none;
+      text-shadow: 2px 2px 0 #383838;
+      outline: 2px solid #000;
+      outline-offset: -2px;
+      image-rendering: pixelated;
+    }
+    .mc-menu-btn:hover {
+      background: #7079AA url('/menu/button_highlighted.png') no-repeat center;
+      background-size: 100% 100%;
+      color: #FFFFA0;
+    }
+    .mc-menu-btn:active { background-color: #555; }
+    .mc-menu-btn.disabled {
+      background: #272727; color: #A9A9A9;
+      cursor: default; pointer-events: none;
+    }
+
+    /* Half-width button pair — gap between them */
+    .mc-menu-row {
+      display: flex; gap: 4px; margin-top: 12px;
+    }
+    .mc-menu-row .mc-menu-btn {
+      flex: 1; width: auto;
+    }
+
+    /* Player name above buttons */
+    #title-player {
+      position: relative; z-index: 2;
+      font-size: clamp(10px, 1.1vw, 14px); color: #aaa;
+      margin-bottom: 4px;
+    }
+    #title-player span { color: #55FF55; }
+
+    /* Footer — bottom of screen, classic style */
+    #title-footer {
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 2;
+      padding: 6px 12px;
+      font-size: clamp(9px, 1vw, 12px); color: #aaa;
+      text-shadow: 1px 1px 0 #000;
+      display: flex; justify-content: space-between;
+    }
+
+    /* ===== AUTH SCREEN (dirt bg — classic Minecraft options screen) ===== */
+    #auth-screen {
+      position: fixed; inset: 0; z-index: 5001;
+      display: none; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)),
+                  #866043 url('/icons/dirt.png') repeat;
+      background-size: auto, 10%;
+      image-rendering: pixelated;
+      font-family: 'Minecraft', monospace;
+      color: #fff; text-shadow: 2px 2px 0 #383838;
+    }
+    #auth-screen.open { display: flex; }
+    #auth-title {
+      font-size: 2vw; margin-bottom: 2vw;
+    }
+    .auth-input {
+      font-family: 'Minecraft', monospace; font-size: 1.2vw;
+      width: 40vw; max-width: 400px; min-width: 260px;
+      padding: 0.6vw 1vw; margin: 0.3vw 0;
+      background: #000; color: #e0e0e0;
+      border: 2px solid #a0a0a0;
+      outline: none; text-shadow: 1px 1px 0 #333;
+    }
+    .auth-input::placeholder { color: #666; text-shadow: none; }
+    .auth-input:focus { border-color: #fff; }
+    #auth-error {
+      font-size: 1vw; color: #ff5555;
+      margin: 0.5vw 0; text-shadow: 1px 1px 0 #3f0000;
+      min-height: 1.2vw;
+    }
+    #auth-screen .mc-menu-btn {
+      width: 40vw; max-width: 400px; min-width: 260px;
+      margin: 0.3vw auto;
+    }
+
+    /* ===== LOADING SCREEN ===== */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 5002;
+      display: none; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)),
+                  #866043 url('/icons/dirt.png') repeat;
+      background-size: auto, 10%;
+      image-rendering: pixelated;
+      font-family: 'Minecraft', monospace;
+      color: #fff; text-shadow: 2px 2px 0 #383838;
+    }
+    #loading-screen.open { display: flex; }
+    #loading-title {
+      font-family: 'Minecraft', monospace; font-size: 18px;
+      color: #fff; margin-bottom: 24px; text-shadow: 2px 2px 0 #3f3f3f;
+    }
+    #loading-bar-wrap {
+      width: 60vw; max-width: 360px; min-width: 200px;
+      height: 18px; background: #222;
+      border: 2px solid; border-color: #555 #aaa #aaa #555;
+      position: relative; overflow: hidden;
+    }
+    #loading-bar-fill {
+      height: 100%; width: 0%;
+      background: #5cb85c; transition: width 0.4s ease;
+      box-shadow: inset 0 2px 0 rgba(255,255,255,0.2);
+    }
+    #loading-pct {
+      font-family: 'Minecraft', monospace; font-size: 11px;
+      color: #aaa; margin-top: 8px; text-shadow: 1px 1px 0 #000;
+    }
+
+    /* ===== MC ERROR MODAL ===== */
+    #mc-error-overlay {
+      position: fixed; inset: 0; z-index: 6000;
+      display: none; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)),
+                  #866043 url('/icons/dirt.png') repeat;
+      background-size: auto, 10%;
+      image-rendering: pixelated;
+      font-family: 'Minecraft', monospace;
+      text-shadow: 2px 2px 0 #383838;
+    }
+    #mc-error-overlay.open { display: flex; }
+    #mc-error-title {
+      color: #ff5555; font-size: clamp(14px, 1.8vw, 20px);
+      margin-bottom: 8px;
+    }
+    #mc-error-detail {
+      color: #aaa; font-size: clamp(10px, 1.2vw, 14px);
+      margin-bottom: 24px; max-width: 80vw; text-align: center;
+    }
+    #mc-error-ok {
+      display: block; width: 50vw; max-width: 300px; min-width: 200px;
+      padding: 6px 0 8px 0;
+      font-family: 'Minecraft', monospace; font-size: clamp(12px, 1.2vw, 16px);
+      text-align: center; cursor: pointer;
+      color: #E0E0E0; background: #7D7D7D url('/menu/button.png') no-repeat center;
+      background-size: 100% 100%; border: none;
+      text-shadow: 2px 2px 0 #383838;
+      outline: 2px solid #000; outline-offset: -2px;
+    }
+    #mc-error-ok:hover {
+      background: #7079AA url('/menu/button_highlighted.png') no-repeat center;
+      background-size: 100% 100%; color: #FFFFA0;
+    }
+
+    /* ===== FRIENDS PANEL ===== */
+    #friends-btn {
+      position: absolute; bottom: 290px; right: 32px; z-index: 1000;
+      width: 34px; height: 34px; border: 2px solid #555;
+      background: #6b6b6b; cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
+      font-size: 16px;
+    }
+    #friends-btn:hover { background: #888; }
+    #friends-btn.has-pending { background: #8b8333; }
+    #friends-panel {
+      display: none; position: absolute; top: 40px; right: 40px; z-index: 1500;
+      width: 320px; max-height: 70vh; overflow-y: auto;
+      background: #c6c6c6; border: 4px solid;
+      border-color: #fff #555 #555 #fff;
+      box-shadow: 2px 4px 0 rgba(0,0,0,0.4);
+      font-family: 'Minecraft', monospace;
+    }
+    #friends-panel.open { display: block; }
+    .fp-title { font-size: 11px; color: #3f3f3f; padding: 6px 8px 4px; text-align: center; text-shadow: 1px 1px 0 rgba(255,255,255,0.3); }
+    .fp-body { padding: 4px 8px 8px; }
+    .fp-code { background: #8b8b8b; border: 2px solid; border-color: #373737 #fff #fff #373737; padding: 6px 8px; margin-bottom: 6px; text-align: center; font-size: 10px; color: #fff; cursor: pointer; }
+    .fp-code span { font-size: 14px; letter-spacing: 3px; color: #55ff55; }
+    .fp-code:hover span { color: #fff; }
+    .fp-input-row { display: flex; gap: 4px; margin-bottom: 6px; }
+    .fp-input { flex: 1; font-family: 'Minecraft', monospace; font-size: 11px; padding: 4px 6px; background: #8b8b8b; color: #fff; outline: none; border: 2px solid; border-color: #373737 #fff #fff #373737; text-transform: uppercase; letter-spacing: 2px; }
+    .fp-add-btn { font-family: 'Minecraft', monospace; font-size: 10px; padding: 4px 8px; background: #5a9c4f; color: #fff; border: 2px solid; border-color: #7bc96a #2d6324 #2d6324 #7bc96a; cursor: pointer; }
+    .fp-add-btn:hover { background: #6ab35e; }
+    .fp-section { font-size: 9px; color: #666; margin: 6px 0 3px; text-transform: uppercase; }
+    .fp-friend { display: flex; align-items: center; gap: 6px; padding: 3px 4px; font-size: 11px; color: #3f3f3f; border-bottom: 1px solid #aaa; }
+    .fp-dot { width: 8px; height: 8px; border: 1px solid #333; }
+    .fp-dot.online { background: #55ff55; }
+    .fp-dot.offline { background: #555; }
+    .fp-name { flex: 1; }
+    .fp-action { font-family: 'Minecraft', monospace; font-size: 9px; padding: 2px 6px; cursor: pointer; border: 1px solid #555; background: #8b8b8b; color: #3f3f3f; }
+    .fp-action:hover { background: #aaa; }
+    .fp-action.accept { background: #5a9c4f; color: #fff; border-color: #2d6324; }
+    .fp-action.deny { background: #c94040; color: #fff; border-color: #8b2020; }
+    .fp-msg { font-size: 10px; color: #666; padding: 4px 0; text-align: center; }
+
+    /* ===== CHAT (MC PE style) ===== */
+    #chat-btn { position: absolute; bottom: 330px; right: 32px; z-index: 1000; width: 34px; height: 34px; border: 2px solid #555; background: #6b6b6b; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444; font-size: 14px; color: #fff; }
+    #chat-btn:hover { background: #888; }
+    #chat-panel { display: none; position: fixed; bottom: 40px; left: 40px; right: 40px; z-index: 1500; max-height: 220px; background: rgba(0,0,0,0.55); border: 2px solid rgba(255,255,255,0.1); font-family: 'Minecraft', monospace; }
+    #chat-panel.open { display: block; }
+    #chat-messages { padding: 8px 10px; max-height: 170px; overflow-y: auto; }
+    .chat-msg { font-size: 11px; color: #fff; padding: 1px 0; text-shadow: 1px 1px 0 #000; }
+    .chat-msg .chat-name { color: #55ff55; }
+    .chat-msg .chat-name.self { color: #aaa; }
+    .chat-msg .chat-system { color: #ffff55; font-style: italic; }
+    #chat-input-row { display: flex; border-top: 1px solid rgba(255,255,255,0.15); }
+    #chat-input { flex: 1; font-family: 'Minecraft', monospace; font-size: 12px; padding: 6px 10px; background: rgba(0,0,0,0.6); color: #fff; border: none; outline: none; }
+    #chat-input::placeholder { color: #666; }
+    #chat-send { font-family: 'Minecraft', monospace; font-size: 11px; padding: 6px 12px; background: #5a9c4f; color: #fff; border: none; cursor: pointer; }
+    #chat-send:hover { background: #6ab35e; }
+
+    /* ===== MOBILE RESPONSIVE ===== */
+    @media (max-width: 768px) {
+      /* Search panel — full width, smaller margin */
+      #search-panel {
+        top: 12px; left: 8px; right: 8px;
+        width: auto;
+      }
+      #search-input { font-size: 14px; padding: 10px 12px; }
+      .ac-item { font-size: 12px; padding: 10px; }
+      .ac-item .ac-sub { font-size: 10px; }
+
+      /* Layer toggle — below search, smaller */
+      #controls {
+        top: 12px; right: 8px;
+      }
+      .ctrl-btn { font-size: 9px; padding: 5px 8px; }
+
+      /* Settings cog — top right, clear of controls */
+      #settings-btn {
+        top: 12px; right: auto; left: 8px;
+        width: 30px; height: 30px;
+      }
+
+      /* Right-side buttons — smaller, closer to edge */
+      #locate-btn, #poi-toggle, #home-btn, #help-btn {
+        right: 10px; width: 38px; height: 38px;
+      }
+      #locate-btn { bottom: 100px; }
+      #poi-toggle { bottom: 146px; }
+      #home-btn { bottom: 192px; }
+      #help-btn { bottom: 238px; }
+      #friends-btn { bottom: 284px; }
+      #chat-btn { bottom: 330px; }
+      #chat-panel { left: 8px; right: 8px; bottom: 60px; }
+      .leaflet-control-zoom { margin-bottom: 10px !important; margin-right: 10px !important; }
+
+      /* Coords bar — smaller */
+      #coords {
+        bottom: 8px; font-size: 9px; padding: 4px 8px;
+      }
+
+      /* Nav banner — full width on mobile */
+      #nav-banner {
+        top: 60px; left: 8px; right: 8px;
+        transform: none; min-width: auto; max-width: none;
+        padding: 8px 12px;
+      }
+      #nav-direction { font-size: 14px; }
+      #nav-distance { font-size: 10px; }
+
+      /* Directions panel */
+      .mc-panel-body { padding: 4px 6px 6px; }
+      .dir-input-wrap input { font-size: 12px; }
+      .step-item { font-size: 11px; }
+
+      /* Map frame — thinner on mobile */
+      :root { --ft: 14px; --fc: 20px; }
+
+      /* Pause menu — full width */
+      #settings-body { width: 90vw; }
+      .mc-btn { font-size: 12px; padding: 10px 0; }
+      #settings-title { font-size: 18px; }
+
+      /* Clock HUD — smaller */
+      #clock-hud {
+        bottom: 40px; left: 8px; padding: 4px 6px;
+      }
+      #mc-clock { width: 24px; height: 24px; }
+      #clock-time { font-size: 10px; }
+      #clock-weather { font-size: 8px; }
+
+      /* Attribution — tighter */
+      .leaflet-control-attribution {
+        margin-bottom: 14px !important; margin-right: 10px !important;
+        font-size: 8px !important;
+      }
+
+      /* Title screen — mobile layout */
+      #title-logo { width: 80%; margin-top: 8%; }
+      #title-edition { font-size: 12px; }
+      #splash-text { font-size: 14px; top: 15%; right: 5%; }
+      .title-buttons {
+        margin: 6vh auto 0;
+        width: 85vw; min-width: 0;
+      }
+      .mc-menu-btn {
+        font-size: 14px; padding: 8px 0 10px 0;
+        outline-width: 2px;
+      }
+      .mc-menu-row { gap: 6px; }
+      #title-footer { font-size: 8px; padding: 4px 8px; }
+
+      /* Auth screen — wider inputs on mobile */
+      #auth-title { font-size: 18px; }
+      .auth-input {
+        width: 85vw; max-width: none;
+        font-size: 14px; padding: 10px 12px;
+      }
+      #auth-screen .mc-menu-btn {
+        width: 85vw; max-width: none;
+        font-size: 14px;
+      }
+      #auth-error { font-size: 11px; }
+
+      /* Loading screen */
+      #loading-title { font-size: 16px; }
+      #loading-bar-wrap { width: 80vw; }
+    }
+
+    /* Extra small screens (phones in portrait) */
+    @media (max-width: 480px) {
+      #search-panel { top: 8px; left: 4px; right: 4px; }
+      #controls { top: 8px; right: 4px; }
+      .ctrl-btn { font-size: 8px; padding: 4px 6px; }
+      #settings-btn { top: 8px; left: 4px; width: 28px; height: 28px; }
+      :root { --ft: 10px; --fc: 14px; }
+      #title-logo { width: 90%; margin-top: 12%; }
+      .title-buttons { width: 92vw; }
+      #splash-text { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <!-- ===== TITLE SCREEN — Classic Minecraft Layout ===== -->
+  <div id="title-screen">
+    <div id="panorama-bg"></div>
+    <div id="panorama-vignette"></div>
+    <img id="title-logo" src="/menu/minecraft_logo.png" alt="Minecraft" />
+    <div id="title-edition">MAP EDITION</div>
+    <div id="splash-text">Now with real buildings!</div>
+    <div class="title-buttons">
+      <div id="title-player" style="display:none">Playing as <span id="title-pname"></span></div>
+      <div class="mc-menu-btn" id="btn-play" onclick="titlePlay()">Singleplayer</div>
+      <div class="mc-menu-btn" id="btn-signin" onclick="showAuth('login')">Sign In</div>
+      <div class="mc-menu-btn" id="btn-signup" onclick="showAuth('register')">Create New Account</div>
+      <div class="mc-menu-row">
+        <div class="mc-menu-btn disabled">Options...</div>
+        <div class="mc-menu-btn disabled">Quit Game</div>
+      </div>
+    </div>
+    <div id="title-footer">
+      <span>Minecraft Map v1.0</span>
+      <span>Not affiliated with Mojang/Microsoft</span>
+    </div>
+  </div>
+
+  <!-- ===== AUTH SCREEN ===== -->
+  <div id="auth-screen">
+    <div id="auth-title">Sign In</div>
+    <input class="auth-input" id="auth-name" type="text" placeholder="Player Name" maxlength="16" autocomplete="off" />
+    <input class="auth-input" id="auth-pass" type="password" placeholder="Password" />
+    <div id="auth-error"></div>
+    <div class="mc-menu-btn" id="auth-submit" onclick="submitAuth()">Sign In</div>
+    <div class="mc-menu-btn" onclick="hideAuth()" style="margin-top:4px">Cancel</div>
+  </div>
+
+  <!-- ===== LOADING SCREEN ===== -->
+  <div id="loading-screen">
+    <div id="loading-title">Loading world...</div>
+    <div id="loading-bar-wrap">
+      <div id="loading-bar-fill"></div>
+    </div>
+    <div id="loading-pct">Building terrain...</div>
+  </div>
+
+  <!-- MC Error Modal -->
+  <div id="mc-error-overlay">
+    <div id="mc-error-title">An error occurred</div>
+    <div id="mc-error-detail">Retry operation.</div>
+    <div id="mc-error-ok" onclick="closeMcError()">Ok</div>
+  </div>
+
+  <!-- Help Overlay -->
+  <div id="help-overlay">
+    <div id="help-title">Controls</div>
+    <div id="help-body">
+      <div class="help-section">
+        <div class="help-section-title">Navigation</div>
+        <div class="help-row"><span>Pan map</span><span class="help-key">W A S D</span></div>
+        <div class="help-row"><span>Zoom in / out</span><span class="help-key">+ / -</span></div>
+        <div class="help-row"><span>Scroll zoom</span><span class="help-key">Mouse wheel</span></div>
+      </div>
+      <div class="help-section">
+        <div class="help-section-title">Menu</div>
+        <div class="help-row"><span>Pause menu</span><span class="help-key">ESC</span></div>
+        <div class="help-row"><span>Search</span><span>Click search bar</span></div>
+      </div>
+      <div class="help-section">
+        <div class="help-section-title">Buttons</div>
+        <div class="help-row"><span>?</span><span>This help screen</span></div>
+        <div class="help-row"><span>Bed</span><span>Click: go home | Hold: set spawn</span></div>
+        <div class="help-row"><span>Compass</span><span>Toggle POI markers</span></div>
+        <div class="help-row"><span>Crosshair</span><span>Show your GPS location</span></div>
+        <div class="help-row"><span>Gear</span><span>Settings / pause menu</span></div>
+      </div>
+      <div class="help-section">
+        <div class="help-section-title">Features</div>
+        <div class="help-row"><span>Directions</span><span>Search a place > Directions</span></div>
+        <div class="help-row"><span>Portal</span><span>Teleport effect for 5km+ jumps</span></div>
+        <div class="help-row"><span>Layers</span><span>Minecraft / Satellite / Roads</span></div>
+      </div>
+    </div>
+    <div id="mc-error-ok" onclick="toggleHelp()" style="margin-top:16px">Done</div>
+  </div>
+
+  <div id="map"></div>
+  <div class="map-frame">
+    <div class="frame-corner frame-ctl"></div>
+    <div class="frame-corner frame-ctr"></div>
+    <div class="frame-corner frame-cbl"></div>
+    <div class="frame-corner frame-cbr"></div>
+    <div class="frame-edge frame-et"></div>
+    <div class="frame-edge frame-eb"></div>
+    <div class="frame-edge frame-el"></div>
+    <div class="frame-edge frame-er"></div>
+  </div>
+
+  <!-- Layer toggle - top right -->
+  <div id="controls">
+    <button class="ctrl-btn active" id="btn-mc" onclick="setView('mc')">Minecraft</button>
+    <button class="ctrl-btn" id="btn-sat" onclick="setView('sat')">Satellite</button>
+    <button class="ctrl-btn" id="btn-roads" onclick="setView('roads')">Roads</button>
+  </div>
+
+  <!-- Search + place card + directions - top left -->
+  <div id="search-panel">
+    <div id="search-wrap">
+      <input type="text" id="search-input" placeholder="Search places..." autocomplete="off" />
+    </div>
+    <div id="place-card" class="mc-panel">
+      <div class="mc-panel-body">
+        <div id="place-name"></div>
+        <div id="place-sub"></div>
+        <div id="place-actions">
+          <button class="place-btn" id="directions-btn" onclick="startDirections()">Directions</button>
+          <button class="place-btn" id="place-close-btn" onclick="closePlace()">x</button>
+        </div>
+      </div>
+    </div>
+    <div id="dir-panel" class="mc-panel">
+      <div class="mc-panel-title">Directions</div>
+      <div class="mc-panel-body">
+        <div id="dir-inputs"></div>
+        <div id="dir-actions">
+          <button class="dir-btn" id="dir-swap" onclick="swapFromTo()">Swap</button>
+          <button class="dir-btn" id="dir-add-stop" onclick="addWaypoint()">+ Stop</button>
+          <button class="dir-btn" id="dir-close" onclick="closeDirections()">Close</button>
+        </div>
+        <div id="dir-info"></div>
+        <div id="dir-steps-toggle" onclick="toggleDirSteps()">Show steps ▼</div>
+        <div id="dir-steps"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="coords">X: 0, Z: 0</div>
+
+  <div id="portal-overlay"></div>
+
+  <div id="nav-banner">
+    <div id="nav-direction"></div>
+    <div id="nav-distance"></div>
+  </div>
+
+  <button id="chat-btn" onclick="toggleChat()" title="Chat">T</button>
+
+  <button id="friends-btn" onclick="toggleFriends()" title="Friends">&#x1F464;</button>
+
+  <button id="help-btn" onclick="toggleHelp()" title="Help">?</button>
+
+  <!-- Friends Panel -->
+  <div id="friends-panel">
+    <div class="fp-title">Friends</div>
+    <div class="fp-body">
+      <div class="fp-code" id="fp-my-code" onclick="copyFriendCode()" title="Click to copy">Your code: <span id="fp-code-val">------</span></div>
+      <div class="fp-input-row">
+        <input class="fp-input" id="fp-add-input" placeholder="FRIEND CODE" maxlength="6" />
+        <button class="fp-add-btn" onclick="addFriend()">Add</button>
+      </div>
+      <div id="fp-pending"></div>
+      <div id="fp-friends-list"></div>
+      <div class="fp-msg" id="fp-status"></div>
+    </div>
+  </div>
+
+  <!-- Chat Panel (MC PE style) -->
+  <div id="chat-panel">
+    <div id="chat-messages"></div>
+    <div id="chat-input-row">
+      <input id="chat-input" type="text" placeholder="Type a message..." maxlength="200" autocomplete="off" />
+      <button id="chat-send" onclick="sendChat()">Send</button>
+    </div>
+  </div>
+
+  <button id="home-btn" onclick="handleHome()" title="Hold to set spawn, click to go home">&#x1F6CF;</button>
+
+  <button id="poi-toggle" onclick="togglePOIs()" title="Show places">
+    <img src="/icons/default.png" alt="POI"/>
+  </button>
+
+  <button id="locate-btn" onclick="toggleLocate()" title="Show my location">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5">
+      <circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+    </svg>
+  </button>
+
+  <button id="settings-btn" onclick="openSettings()" title="Settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
+      <path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/>
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+    </svg>
+  </button>
+
+  <div id="night-overlay"></div>
+  <div id="gloom-overlay"></div>
+  <canvas id="weather-canvas"></canvas>
+
+  <div id="clock-hud">
+    <img id="mc-clock" src="/clock/clock_00.png" alt="clock"/>
+    <div id="clock-info">
+      <div id="clock-time">12:00</div>
+      <div id="clock-weather"><span id="weather-icon"></span><span id="weather-text">--</span></div>
+    </div>
+  </div>
+
+  <div id="settings-overlay">
+    <div id="settings-title">Game Menu</div>
+    <div id="settings-body">
+      <div class="mc-btn" onclick="closeSettings()">Back to Game</div>
+
+      <div class="mc-btn-spacer"></div>
+
+      <div class="mc-btn-row">
+        <div class="mc-btn" id="toggle-sfx" onclick="toggleSetting('sfx')">Sound Effects: <span class="btn-val">ON</span></div>
+        <div class="mc-btn" id="toggle-ambient" onclick="toggleSetting('ambient')">Ambient: <span class="btn-val off">OFF</span></div>
+      </div>
+
+      <div class="mc-btn-row">
+        <div class="mc-btn" id="toggle-night" onclick="toggleSetting('night')">Real-Time Lighting: <span class="btn-val off">OFF</span></div>
+        <div class="mc-btn" id="toggle-pois" onclick="toggleSetting('pois')">Show POIs: <span class="btn-val off">OFF</span></div>
+      </div>
+
+      <div class="mc-btn-row">
+        <div class="mc-btn" id="toggle-frame" onclick="toggleSetting('frame')">Map Frame: <span class="btn-val">ON</span></div>
+        <div class="mc-btn" id="toggle-weather" onclick="toggleSetting('weather')">Weather: <span class="btn-val">ON</span></div>
+      </div>
+
+      <div class="mc-slider-wrap" id="volume-slider" onmousedown="startVolumeDrag(event)" ontouchstart="startVolumeDrag(event)">
+        <div class="mc-slider-fill" id="vol-fill"></div>
+        <div class="mc-slider-knob" id="vol-knob"></div>
+        <div class="mc-slider-label" id="vol-label">Volume: 50%</div>
+      </div>
+
+      <div class="mc-btn-spacer"></div>
+
+      <div class="mc-btn" onclick="openCheats()">Cheats</div>
+
+      <div class="mc-btn" id="menu-signout" onclick="menuSignOut()" style="display:none">Sign Out</div>
+      <div class="mc-btn" id="menu-title" onclick="backToTitle()">Disconnect</div>
+    </div>
+  </div>
+
+  <!-- Cheats menu — separate overlay screen -->
+  <div id="cheats-overlay">
+    <div id="settings-title">Cheats</div>
+    <div id="settings-body">
+      <div class="mc-btn" id="toggle-forceday" onclick="toggleSetting('forceday')">Force Day: <span class="btn-val off">OFF</span></div>
+      <div class="mc-btn" id="toggle-forcenight" onclick="toggleSetting('forcenight')">Force Night: <span class="btn-val off">OFF</span></div>
+      <div class="mc-btn-row">
+        <div class="mc-btn" id="toggle-forcerain" onclick="toggleSetting('forcerain')">Force Rain: <span class="btn-val off">OFF</span></div>
+        <div class="mc-btn" id="toggle-forcesnow" onclick="toggleSetting('forcesnow')">Force Snow: <span class="btn-val off">OFF</span></div>
+      </div>
+      <div class="mc-btn" onclick="clearTileCache()">Clear Tile Cache</div>
+      <div class="mc-btn-spacer"></div>
+      <div class="mc-btn" onclick="closeCheats()">Done</div>
+    </div>
+  </div>
+
+  <script>
+    // ---- Title Screen / Auth / Loading System ----
+    const SPLASHES = [
+      'Now with real buildings!', 'Also try Terraria!', 'As seen on TV!',
+      '100% pure!', 'May contain nuts!', 'Limited edition!',
+      'Cloud computing!', '90% bug free!', 'Reticulating splines!',
+      'Made with love!', 'Exploding creepers!', 'Turing complete!',
+      'NP is not in P!', 'Free dental!', 'Legal in Finland!',
+      'Now in 3D!', 'Check out the far lands!', 'Awesome!',
+      'Follow the train, CJ!', 'Stop, hammertime!',
+      'Read more books!', 'Plant a tree!', 'Stay safe!',
+      'Euclidian!', 'Homeomorphic to a 3-sphere!', 'Leveraging synergy!',
+      '150% hyperbole!', 'Kind of dragon free!',
+      'Han shot first!', 'Open source!', 'Powered by OpenStreetMap!',
+      'The whole world!', 'One block at a time!', 'Biome-aware!',
+      'Pixel perfect!', 'Voxel by voxel!', 'No mods required!',
+    ];
+
+    let currentPlayer = null;
+    let authMode = 'login'; // 'login' or 'register'
+
+    // Pick random splash
+    document.getElementById('splash-text').textContent =
+      SPLASHES[Math.floor(Math.random() * SPLASHES.length)];
+
+    // Check if already logged in
+    fetch('/api/me').then(r => r.json()).then(data => {
+      if (data.player) {
+        currentPlayer = data.player;
+        updateTitleForPlayer();
+      }
+    }).catch(() => {});
+
+    function updateTitleForPlayer() {
+      const playerDiv = document.getElementById('title-player');
+      const pname = document.getElementById('title-pname');
+      const signIn = document.getElementById('btn-signin');
+      const signUp = document.getElementById('btn-signup');
+      if (currentPlayer) {
+        playerDiv.style.display = '';
+        pname.textContent = currentPlayer.playerName;
+        signIn.textContent = 'Sign Out';
+        signIn.onclick = doSignOut;
+        signUp.style.display = 'none';
+      } else {
+        playerDiv.style.display = 'none';
+        signIn.textContent = 'Sign In';
+        signIn.onclick = function() { showAuth('login'); };
+        signUp.style.display = '';
+      }
+      // Also update pause menu sign out button
+      if (typeof updateMenuSignOut === 'function') updateMenuSignOut();
+    }
+
+    function showAuth(mode) {
+      authMode = mode;
+      document.getElementById('auth-title').textContent =
+        mode === 'register' ? 'Create New Account' : 'Sign In';
+      document.getElementById('auth-submit').textContent =
+        mode === 'register' ? 'Create Account' : 'Sign In';
+      document.getElementById('auth-error').textContent = '';
+      document.getElementById('auth-name').value = '';
+      document.getElementById('auth-pass').value = '';
+      document.getElementById('auth-screen').classList.add('open');
+      document.getElementById('auth-name').focus();
+    }
+
+    function hideAuth() {
+      document.getElementById('auth-screen').classList.remove('open');
+    }
+
+    async function submitAuth() {
+      const playerName = document.getElementById('auth-name').value.trim();
+      const password = document.getElementById('auth-pass').value;
+      const errorEl = document.getElementById('auth-error');
+      errorEl.textContent = '';
+
+      if (!playerName || !password) {
+        errorEl.textContent = 'Fill in all fields';
+        return;
+      }
+
+      const url = authMode === 'register' ? '/api/register' : '/api/login';
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerName, password }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.error || 'Something went wrong';
+          return;
+        }
+        currentPlayer = data.player;
+        hideAuth();
+        updateTitleForPlayer();
+
+        // If registering, auto-play with "Creating New World" loading
+        if (authMode === 'register') {
+          showLoading(true);
+        }
+      } catch (e) {
+        errorEl.textContent = 'Connection error';
+      }
+    }
+
+    // Enter key submits auth form
+    document.getElementById('auth-pass').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitAuth();
+    });
+    document.getElementById('auth-name').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('auth-pass').focus();
+    });
+
+    async function doSignOut() {
+      await fetch('/api/logout', { method: 'POST' });
+      currentPlayer = null;
+      updateTitleForPlayer();
+    }
+
+    function titlePlay() {
+      showLoading(false);
+    }
+
+    function showLoading(isNewWorld) {
+      const loadScreen = document.getElementById('loading-screen');
+      const title = document.getElementById('loading-title');
+      const bar = document.getElementById('loading-bar-fill');
+      const pct = document.getElementById('loading-pct');
+
+      loadScreen.classList.add('open');
+
+      const steps = isNewWorld
+        ? ['Creating New World...', 'Preparing spawn area...', 'Building terrain...', 'Generating decorations...', 'Loading...']
+        : ['Loading world...', 'Building terrain...', 'Preparing spawn area...', 'Loading...'];
+
+      let step = 0;
+      let progress = 0;
+
+      title.textContent = steps[0];
+      bar.style.width = '0%';
+      pct.textContent = '0%';
+
+      const interval = setInterval(() => {
+        progress += 3 + Math.random() * 8;
+        if (progress > 100) progress = 100;
+
+        bar.style.width = progress + '%';
+        pct.textContent = Math.floor(progress) + '%';
+
+        // Advance step text
+        const stepIdx = Math.min(Math.floor(progress / (100 / steps.length)), steps.length - 1);
+        if (stepIdx !== step) {
+          step = stepIdx;
+          title.textContent = steps[step];
+        }
+
+        if (progress >= 100) {
+          clearInterval(interval);
+          setTimeout(() => {
+            loadScreen.classList.remove('open');
+            document.getElementById('title-screen').classList.add('hidden');
+          }, 400);
+        }
+      }, isNewWorld ? 120 : 80);
+    }
+
+    // ---- Minecraft Sound System ----
+    const SFX = (() => {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const cache = {};
+      let unlocked = false;
+      const names = ['click', 'orb', 'pop', 'chestopen', 'chestclosed', 'levelup', 'wood_click'];
+      // Pre-load all sounds
+      names.forEach(name => {
+        fetch('/sounds/' + name + '.ogg')
+          .then(r => r.arrayBuffer())
+          .then(buf => ctx.decodeAudioData(buf))
+          .then(decoded => { cache[name] = decoded; })
+          .catch(() => {});
+      });
+      // Unlock AudioContext on first user gesture (browser policy)
+      function unlock() {
+        if (unlocked) return;
+        ctx.resume().then(() => { unlocked = true; });
+      }
+      ['click', 'touchstart', 'keydown'].forEach(evt =>
+        document.addEventListener(evt, unlock, { once: false, capture: true })
+      );
+      function play(name, vol = 0.5, rate = 1.0) {
+        if (ctx.state === 'suspended') ctx.resume();
+        const buf = cache[name];
+        if (!buf) return;
+        const src = ctx.createBufferSource();
+        const gain = ctx.createGain();
+        src.buffer = buf;
+        src.playbackRate.value = rate;
+        gain.gain.value = vol;
+        src.connect(gain).connect(ctx.destination);
+        src.start();
+      }
+      return { play };
+    })();
+
+    // Default to Manhattan, but try to use saved or GPS location
+    const savedLoc = JSON.parse(localStorage.getItem('mc-last-location') || 'null');
+    const defaultCenter = savedLoc ? [savedLoc.lat, savedLoc.lng] : [40.767, -73.975];
+    const defaultZoom = savedLoc ? (savedLoc.zoom || 16) : 16;
+    const map = L.map('map', { center: defaultCenter, zoom: defaultZoom, minZoom: 2, maxZoom: 18, zoomControl: false });
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // Try GPS on first load (if no saved location)
+    // Auto-enable location tracking on load
+    if (navigator.geolocation) {
+      setTimeout(function() { if (!locateActive) toggleLocate(); }, 1000);
+    }
+
+    // Save location on pan/zoom
+    map.on('moveend', function() {
+      var c = map.getCenter();
+      localStorage.setItem('mc-last-location', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
+    });
+
+    const mcLayer = L.tileLayer('/tiles/{z}/{x}/{y}.png?v=' + Date.now(), { maxNativeZoom: 16, maxZoom: 18, crossOrigin: 'anonymous', attribution: 'Minecraft Map | &copy; OSM', keepBuffer: 10, updateWhenZooming: false });
+    const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: '&copy; Esri' });
+    const roadsLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OSM' });
+    let activeLayer = mcLayer;
+    mcLayer.addTo(map);
+
+    function setView(mode) {
+      SFX.play('click', 0.4, 0.9 + Math.random() * 0.2);
+      map.removeLayer(activeLayer);
+      document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+      if (mode === 'mc') { activeLayer = mcLayer; document.getElementById('btn-mc').classList.add('active'); document.getElementById('map').style.imageRendering = 'pixelated'; }
+      else if (mode === 'sat') { activeLayer = satLayer; document.getElementById('btn-sat').classList.add('active'); document.getElementById('map').style.imageRendering = 'auto'; }
+      else { activeLayer = roadsLayer; document.getElementById('btn-roads').classList.add('active'); document.getElementById('map').style.imageRendering = 'auto'; }
+      activeLayer.addTo(map);
+    }
+
+    map.on('mousemove', e => {
+      const mcX = Math.floor(e.latlng.lng * 1000);
+      const mcZ = Math.floor(-e.latlng.lat * 1000);
+      document.getElementById('coords').textContent = 'X: ' + mcX + '  Z: ' + mcZ + '  (' + e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4) + ')';
+    });
+
+    // ---- Shared ----
+    let acTimer = null;
+    let userLoc = null;
+    let placeMarker = null;
+    let selectedPlace = null; // {lat, lng, name, sub}
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(p => { userLoc = { lat: p.coords.latitude, lng: p.coords.longitude }; }, () => {}, { enableHighAccuracy: false, timeout: 5000 });
+    }
+
+    function formatResult(props) {
+      const parts = [];
+      if (props.name) parts.push(props.name);
+      if (props.street) { let s = props.street; if (props.housenumber) s += ' ' + props.housenumber; parts.push(s); }
+      const sub = [];
+      if (props.city || props.town || props.village) sub.push(props.city || props.town || props.village);
+      if (props.state) sub.push(props.state);
+      if (props.country) sub.push(props.country);
+      return { main: parts.join(', ') || sub.join(', '), sub: sub.join(', ') };
+    }
+
+    async function photonSearch(q) {
+      const center = map.getCenter();
+      const res = await fetch('https://photon.komoot.io/api?q=' + encodeURIComponent(q) + '&limit=5&lat=' + center.lat + '&lon=' + center.lng);
+      const data = await res.json();
+      return data.features || [];
+    }
+
+    function makePixelIcon(color) {
+      const px = 3, sz = 7, c = document.createElement('canvas');
+      c.width = sz * px; c.height = sz * px;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#111';
+      ctx.fillRect(1*px, 0, 5*px, 7*px);
+      ctx.fillRect(0, 1*px, 7*px, 5*px);
+      ctx.fillStyle = color;
+      ctx.fillRect(1*px, 1*px, 5*px, 5*px);
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.fillRect(2*px, 2*px, 2*px, 2*px);
+      return L.icon({ iconUrl: c.toDataURL(), iconSize: [21, 21], iconAnchor: [10, 10], className: 'player-marker' });
+    }
+
+    // ---- Search with autocomplete ----
+    const searchInput = document.getElementById('search-input');
+    const searchWrap = document.getElementById('search-wrap');
+
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.trim();
+      closeAC(searchWrap);
+      if (q.length < 2) return;
+      clearTimeout(acTimer);
+      acTimer = setTimeout(async () => {
+        const features = await photonSearch(q);
+        if (!features.length) return;
+        showSearchResults(features);
+      }, 250);
+    });
+
+    searchInput.addEventListener('keydown', e => {
+      const dd = searchWrap.querySelector('.ac-dropdown');
+      if (!dd) return;
+      const items = dd.querySelectorAll('.ac-item');
+      let sel = Array.from(items).findIndex(i => i.classList.contains('sel'));
+      if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, items.length - 1); items.forEach((it, i) => it.classList.toggle('sel', i === sel)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); items.forEach((it, i) => it.classList.toggle('sel', i === sel)); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (sel >= 0) items[sel].click(); }
+      else if (e.key === 'Escape') { closeAC(searchWrap); }
+    });
+
+    searchInput.addEventListener('blur', () => { setTimeout(() => closeAC(searchWrap), 200); });
+
+    function showSearchResults(features) {
+      closeAC(searchWrap);
+      const dd = document.createElement('div');
+      dd.className = 'ac-dropdown';
+      features.forEach(f => {
+        const props = f.properties;
+        const coords = f.geometry.coordinates;
+        const fmt = formatResult(props);
+        const item = document.createElement('div');
+        item.className = 'ac-item';
+        item.innerHTML = fmt.main + (fmt.sub && fmt.sub !== fmt.main ? '<span class="ac-sub">' + fmt.sub + '</span>' : '');
+        item.addEventListener('mousedown', e => {
+          e.preventDefault();
+          selectPlace(coords[1], coords[0], fmt.main, fmt.sub);
+        });
+        dd.appendChild(item);
+      });
+      searchWrap.appendChild(dd);
+    }
+
+    function selectPlace(lat, lng, name, sub) {
+      closeAC(searchWrap);
+      searchInput.value = name;
+      selectedPlace = { lat, lng, name, sub };
+      SFX.play('orb', 0.35, 1.2);
+
+      // Fly to location
+      map.setView([lat, lng], 16);
+
+      // Place marker
+      if (placeMarker) map.removeLayer(placeMarker);
+      placeMarker = L.marker([lat, lng], { icon: makePixelIcon('#cc4444'), zIndexOffset: 5000 }).addTo(map);
+      SFX.play('pop', 0.3);
+
+      // Show place card
+      document.getElementById('place-name').textContent = name;
+      document.getElementById('place-sub').textContent = sub || '';
+      document.getElementById('place-card').classList.add('open');
+      document.getElementById('dir-panel').classList.remove('open');
+    }
+
+    function closePlace() {
+      SFX.play('wood_click', 0.3);
+      document.getElementById('place-card').classList.remove('open');
+      if (placeMarker) { map.removeLayer(placeMarker); placeMarker = null; }
+      selectedPlace = null;
+      searchInput.value = '';
+    }
+
+    function closeAC(wrap) {
+      if (wrap) wrap.querySelectorAll('.ac-dropdown').forEach(d => d.remove());
+      else document.querySelectorAll('.ac-dropdown').forEach(d => d.remove());
+    }
+
+    // ---- Directions ----
+    let routeLine = null;
+    let routeMarkers = [];
+    let routePoints = [];
+
+    function startDirections() {
+      SFX.play('chestopen', 0.35);
+      document.getElementById('place-card').classList.remove('open');
+      document.getElementById('dir-panel').classList.add('open');
+
+      routePoints = [];
+      if (userLoc) {
+        routePoints.push({ lat: userLoc.lat, lng: userLoc.lng, value: 'Your location', placeholder: 'From...' });
+      } else {
+        routePoints.push({ lat: null, lng: null, value: '', placeholder: 'From...' });
+      }
+      if (selectedPlace) {
+        routePoints.push({ lat: selectedPlace.lat, lng: selectedPlace.lng, value: selectedPlace.name, placeholder: 'Where to?' });
+      } else {
+        routePoints.push({ lat: null, lng: null, value: '', placeholder: 'Where to?' });
+      }
+
+      if (placeMarker) { map.removeLayer(placeMarker); placeMarker = null; }
+
+      renderDirInputs();
+      tryAutoRoute();
+    }
+
+    function closeDirections() {
+      SFX.play('chestclosed', 0.35);
+      stopNavigation();
+      document.getElementById('dir-panel').classList.remove('open');
+      document.getElementById('dir-info').style.display = 'none';
+      document.getElementById('dir-steps').classList.remove('open');
+      document.getElementById('dir-steps').innerHTML = '';
+      document.getElementById('dir-steps-toggle').classList.remove('open');
+      const navBtn = document.getElementById('nav-start-btn');
+      if (navBtn) navBtn.style.display = 'none';
+      routeMarkers.forEach(m => map.removeLayer(m));
+      routeMarkers = [];
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      routePoints = [];
+      navSteps = [];
+      selectedPlace = null;
+      if (placeMarker) { map.removeLayer(placeMarker); placeMarker = null; }
+      searchInput.value = '';
+    }
+
+    function addWaypoint() {
+      SFX.play('click', 0.3);
+      const idx = routePoints.length - 1;
+      routePoints.splice(idx, 0, { lat: null, lng: null, value: '', placeholder: 'Add stop...' });
+      renderDirInputs();
+    }
+
+    function removeStop(idx) {
+      if (routePoints.length <= 2) return;
+      SFX.play('pop', 0.25, 0.8);
+      routePoints.splice(idx, 1);
+      renderDirInputs();
+      tryAutoRoute();
+    }
+
+    function swapFromTo() {
+      if (routePoints.length < 2) return;
+      SFX.play('wood_click', 0.3);
+      const tmp = { ...routePoints[0] };
+      routePoints[0] = { ...routePoints[routePoints.length - 1], placeholder: 'From...' };
+      routePoints[routePoints.length - 1] = { ...tmp, placeholder: 'Where to?' };
+      renderDirInputs();
+      tryAutoRoute();
+    }
+
+    function renderDirInputs() {
+      const container = document.getElementById('dir-inputs');
+      container.innerHTML = '';
+      routePoints.forEach((pt, i) => {
+        const row = document.createElement('div');
+        row.className = 'dir-row';
+        const dot = document.createElement('div');
+        dot.className = 'dir-icon ' + (i === 0 ? 'from' : i === routePoints.length - 1 ? 'to' : 'stop');
+        const wrap = document.createElement('div');
+        wrap.className = 'dir-input-wrap';
+        const input = document.createElement('input');
+        input.placeholder = pt.placeholder;
+        input.value = pt.value || '';
+        if (pt.lat !== null) input.classList.add('resolved');
+        input.addEventListener('input', e => {
+          routePoints[i].value = e.target.value;
+          routePoints[i].lat = null;
+          routePoints[i].lng = null;
+          e.target.classList.remove('resolved');
+          closeAC(wrap);
+          const q = e.target.value.trim();
+          if (q.length < 2) { if (!q && userLoc) showDirYourLoc(i, wrap); return; }
+          clearTimeout(acTimer);
+          acTimer = setTimeout(async () => {
+            const features = await photonSearch(q);
+            if (!features.length) return;
+            showDirResults(features, i, wrap);
+          }, 250);
+        });
+        input.addEventListener('keydown', e => {
+          const dd = wrap.querySelector('.ac-dropdown');
+          if (!dd) return;
+          const items = dd.querySelectorAll('.ac-item');
+          let sel = Array.from(items).findIndex(x => x.classList.contains('sel'));
+          if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, items.length - 1); items.forEach((x, j) => x.classList.toggle('sel', j === sel)); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); items.forEach((x, j) => x.classList.toggle('sel', j === sel)); }
+          else if (e.key === 'Enter') { e.preventDefault(); if (sel >= 0) items[sel].click(); }
+          else if (e.key === 'Escape') { closeAC(wrap); }
+        });
+        input.addEventListener('focus', () => {
+          if (!input.value && userLoc) showDirYourLoc(i, wrap);
+          else if (input.value.length >= 2) { clearTimeout(acTimer); acTimer = setTimeout(async () => { const f = await photonSearch(input.value); if (f.length) showDirResults(f, i, wrap); }, 250); }
+        });
+        input.addEventListener('blur', () => { setTimeout(() => closeAC(wrap), 200); });
+        wrap.appendChild(input);
+        row.appendChild(dot);
+        row.appendChild(wrap);
+        if (routePoints.length > 2) {
+          const rm = document.createElement('button');
+          rm.className = 'dir-remove';
+          rm.textContent = 'x';
+          rm.onclick = () => removeStop(i);
+          row.appendChild(rm);
+        }
+        container.appendChild(row);
+      });
+    }
+
+    function showDirYourLoc(idx, wrap) {
+      closeAC(wrap);
+      const dd = document.createElement('div');
+      dd.className = 'ac-dropdown';
+      const item = document.createElement('div');
+      item.className = 'ac-item';
+      item.textContent = 'Your location';
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        routePoints[idx].lat = userLoc.lat;
+        routePoints[idx].lng = userLoc.lng;
+        routePoints[idx].value = 'Your location';
+        renderDirInputs();
+        tryAutoRoute();
+      });
+      dd.appendChild(item);
+      wrap.appendChild(dd);
+    }
+
+    function showDirResults(features, idx, wrap) {
+      closeAC(wrap);
+      const dd = document.createElement('div');
+      dd.className = 'ac-dropdown';
+      features.forEach(f => {
+        const props = f.properties;
+        const coords = f.geometry.coordinates;
+        const fmt = formatResult(props);
+        const item = document.createElement('div');
+        item.className = 'ac-item';
+        item.innerHTML = fmt.main + (fmt.sub && fmt.sub !== fmt.main ? '<span class="ac-sub">' + fmt.sub + '</span>' : '');
+        item.addEventListener('mousedown', e => {
+          e.preventDefault();
+          routePoints[idx].lat = coords[1];
+          routePoints[idx].lng = coords[0];
+          routePoints[idx].value = fmt.main;
+          renderDirInputs();
+          tryAutoRoute();
+        });
+        dd.appendChild(item);
+      });
+      wrap.appendChild(dd);
+    }
+
+    function tryAutoRoute() {
+      if (routePoints.length >= 2 && routePoints.every(p => p.lat !== null)) calcRoute();
+    }
+
+    function toggleDirSteps() {
+      const steps = document.getElementById('dir-steps');
+      const toggle = document.getElementById('dir-steps-toggle');
+      const isOpen = steps.classList.contains('open');
+      steps.classList.toggle('open');
+      const count = steps.children.length;
+      toggle.textContent = isOpen ? ('Show ' + count + ' steps \u25BC') : ('Hide steps \u25B2');
+      SFX.play('click', 0.2);
+    }
+
+    // ---- MC Error Modal ----
+    function showMcError(title, detail) {
+      document.getElementById('mc-error-title').textContent = title || 'An error occurred';
+      document.getElementById('mc-error-detail').textContent = detail || 'Retry operation.';
+      document.getElementById('mc-error-overlay').classList.add('open');
+      SFX.play('pop', 0.4, 0.6);
+    }
+    function closeMcError() {
+      document.getElementById('mc-error-overlay').classList.remove('open');
+      SFX.play('click', 0.3);
+    }
+
+    // ---- Help overlay ----
+    function toggleHelp() {
+      const overlay = document.getElementById('help-overlay');
+      overlay.classList.toggle('open');
+      SFX.play('click', 0.3);
+    }
+
+    // ============================================
+    // WebSocket client — friends + chat
+    // ============================================
+    let ws = null;
+    let wsReconnectTimer = null;
+    const friendMarkers = {};
+
+    function connectWS() {
+      if (!currentPlayer) return;
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(proto + '//' + location.host);
+
+      ws.onopen = function() {
+        console.log('[WS] Connected');
+        // Start sending location every 10s
+        if (navigator.geolocation) {
+          setInterval(function() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              navigator.geolocation.getCurrentPosition(function(pos) {
+                ws.send(JSON.stringify({ type: 'location', lat: pos.coords.latitude, lng: pos.coords.longitude }));
+              }, function() {}, { enableHighAccuracy: false, timeout: 5000 });
+            }
+          }, 10000);
+        }
+      };
+
+      ws.onmessage = function(e) {
+        try {
+          var msg = JSON.parse(e.data);
+          handleWSMessage(msg);
+        } catch(err) {}
+      };
+
+      ws.onclose = function() {
+        console.log('[WS] Disconnected');
+        ws = null;
+        // Reconnect after 5s
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = setTimeout(connectWS, 5000);
+      };
+    }
+
+    function handleWSMessage(msg) {
+      if (msg.type === 'friend_location') {
+        updateFriendMarker(msg.playerId, msg.playerName, msg.lat, msg.lng);
+      }
+      if (msg.type === 'friend_online') {
+        addChatSystem(msg.playerName + ' joined the game');
+        refreshFriends();
+      }
+      if (msg.type === 'friend_offline') {
+        removeFriendMarker(msg.playerId);
+        addChatSystem(msg.playerName + ' left the game');
+        refreshFriends();
+      }
+      if (msg.type === 'chat') {
+        addChatMessage(msg.playerName, msg.content, msg.self);
+      }
+      if (msg.type === 'friend_request') {
+        addChatSystem(msg.from + ' sent you a friend request!');
+        SFX.play('orb', 0.3);
+        document.getElementById('friends-btn').classList.add('has-pending');
+        refreshFriends();
+      }
+      if (msg.type === 'friend_accepted') {
+        addChatSystem(msg.by + ' accepted your friend request!');
+        SFX.play('levelup', 0.3);
+        refreshFriends();
+      }
+    }
+
+    // ---- Friend markers on map ----
+    const FRIEND_COLORS = ['#ff5555','#55ffff','#ffaa00','#ff55ff','#55ff55','#5555ff','#ffff55','#ff8800'];
+
+    function updateFriendMarker(playerId, name, lat, lng) {
+      if (friendMarkers[playerId]) {
+        friendMarkers[playerId].setLatLng([lat, lng]);
+      } else {
+        var colorIdx = playerId % FRIEND_COLORS.length;
+        var icon = makePixelIcon(FRIEND_COLORS[colorIdx]);
+        var marker = L.marker([lat, lng], { icon: icon, zIndexOffset: 8000 }).addTo(map);
+        marker.bindTooltip(name, {
+          permanent: true, direction: 'top', offset: [0, -12],
+          className: 'friend-tooltip'
+        });
+        friendMarkers[playerId] = marker;
+      }
+    }
+
+    function removeFriendMarker(playerId) {
+      if (friendMarkers[playerId]) {
+        map.removeLayer(friendMarkers[playerId]);
+        delete friendMarkers[playerId];
+      }
+    }
+
+    // ---- Friends panel ----
+    function toggleFriends() {
+      var panel = document.getElementById('friends-panel');
+      var isOpen = panel.classList.toggle('open');
+      SFX.play('click', 0.3);
+      if (isOpen) refreshFriends();
+    }
+
+    function refreshFriends() {
+      if (!currentPlayer) return;
+      document.getElementById('fp-code-val').textContent = currentPlayer.friendCode || '------';
+
+      fetch('/api/friends').then(function(r) { return r.json(); }).then(function(data) {
+        // Pending requests
+        var pendingDiv = document.getElementById('fp-pending');
+        pendingDiv.innerHTML = '';
+        if (data.pending && data.pending.length > 0) {
+          pendingDiv.innerHTML = '<div class="fp-section">Pending Requests</div>';
+          document.getElementById('friends-btn').classList.add('has-pending');
+          data.pending.forEach(function(p) {
+            var el = document.createElement('div');
+            el.className = 'fp-friend';
+            el.innerHTML = '<div class="fp-dot online"></div><div class="fp-name">' + p.player_name + '</div>' +
+              '<button class="fp-action accept" onclick="acceptFriend(' + p.friendship_id + ')">Accept</button>' +
+              '<button class="fp-action deny" onclick="removeFriend(' + p.id + ')">Deny</button>';
+            pendingDiv.appendChild(el);
+          });
+        } else {
+          document.getElementById('friends-btn').classList.remove('has-pending');
+        }
+
+        // Friends list
+        var listDiv = document.getElementById('fp-friends-list');
+        listDiv.innerHTML = '';
+        if (data.friends && data.friends.length > 0) {
+          listDiv.innerHTML = '<div class="fp-section">Friends</div>';
+          data.friends.forEach(function(f) {
+            var el = document.createElement('div');
+            el.className = 'fp-friend';
+            el.innerHTML = '<div class="fp-dot ' + (f.online ? 'online' : 'offline') + '"></div>' +
+              '<div class="fp-name">' + f.player_name + '</div>' +
+              '<button class="fp-action" onclick="removeFriend(' + f.id + ')">x</button>';
+            listDiv.appendChild(el);
+          });
+        } else if (!data.pending || data.pending.length === 0) {
+          listDiv.innerHTML = '<div class="fp-msg">No friends yet. Share your code!</div>';
+        }
+      }).catch(function() {});
+    }
+
+    function copyFriendCode() {
+      var code = document.getElementById('fp-code-val').textContent;
+      if (code && code !== '------') {
+        navigator.clipboard.writeText(code).then(function() {
+          document.getElementById('fp-status').textContent = 'Copied!';
+          SFX.play('orb', 0.3);
+          setTimeout(function() { document.getElementById('fp-status').textContent = ''; }, 2000);
+        });
+      }
+    }
+
+    function addFriend() {
+      var input = document.getElementById('fp-add-input');
+      var code = input.value.trim().toUpperCase();
+      if (code.length !== 6) { document.getElementById('fp-status').textContent = 'Code must be 6 characters'; return; }
+      fetch('/api/friends/add', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code }),
+      }).then(function(r) { return r.json(); }).then(function(data) {
+        if (data.error) { document.getElementById('fp-status').textContent = data.error; }
+        else { document.getElementById('fp-status').textContent = 'Request sent to ' + data.friendName + '!'; SFX.play('orb', 0.3); input.value = ''; refreshFriends(); }
+        setTimeout(function() { document.getElementById('fp-status').textContent = ''; }, 3000);
+      });
+    }
+
+    function acceptFriend(friendshipId) {
+      fetch('/api/friends/accept', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ friendshipId: friendshipId }),
+      }).then(function() { SFX.play('levelup', 0.3); refreshFriends(); });
+    }
+
+    function removeFriend(friendId) {
+      fetch('/api/friends/remove', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ friendId: friendId }),
+      }).then(function() { refreshFriends(); });
+    }
+
+    // ---- Chat (MC PE style) ----
+    var chatOpen = false;
+
+    function toggleChat() {
+      chatOpen = !chatOpen;
+      document.getElementById('chat-panel').classList.toggle('open', chatOpen);
+      SFX.play('click', 0.3);
+      if (chatOpen) document.getElementById('chat-input').focus();
+    }
+
+    function sendChat() {
+      var input = document.getElementById('chat-input');
+      var content = input.value.trim();
+      if (!content || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: 'chat', content: content }));
+      input.value = '';
+      input.focus();
+    }
+
+    document.getElementById('chat-input').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') sendChat();
+      e.stopPropagation(); // Don't trigger WASD panning
+    });
+
+    function addChatMessage(name, content, isSelf) {
+      var div = document.getElementById('chat-messages');
+      var el = document.createElement('div');
+      el.className = 'chat-msg';
+      el.innerHTML = '<span class="chat-name' + (isSelf ? ' self' : '') + '">&lt;' + name + '&gt;</span> ' + content.replace(/</g, '&lt;');
+      div.appendChild(el);
+      div.scrollTop = div.scrollHeight;
+      // Auto-show chat when message received
+      if (!chatOpen && !isSelf) {
+        document.getElementById('chat-panel').classList.add('open');
+        chatOpen = true;
+      }
+    }
+
+    function addChatSystem(text) {
+      var div = document.getElementById('chat-messages');
+      var el = document.createElement('div');
+      el.className = 'chat-msg';
+      el.innerHTML = '<span class="chat-system">' + text + '</span>';
+      div.appendChild(el);
+      div.scrollTop = div.scrollHeight;
+    }
+
+    // Connect WS after login
+    var _origUpdateTitle = updateTitleForPlayer;
+    updateTitleForPlayer = function() {
+      _origUpdateTitle();
+      if (currentPlayer && !ws) connectWS();
+      if (currentPlayer) refreshFriends();
+    };
+
+    async function calcRoute() {
+      const info = document.getElementById('dir-info');
+      routeMarkers.forEach(m => map.removeLayer(m));
+      routeMarkers = [];
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      routePoints.forEach((pt, i) => {
+        const color = i === 0 ? '#44cc44' : i === routePoints.length - 1 ? '#cc4444' : '#cccc44';
+        routeMarkers.push(L.marker([pt.lat, pt.lng], { icon: makePixelIcon(color), zIndexOffset: 5000 }).addTo(map));
+      });
+      const coords = routePoints.map(p => p.lng + ',' + p.lat).join(';');
+      try {
+        info.style.display = 'block'; info.style.color = '#3f3f3f'; info.textContent = 'Calculating...';
+        const res = await fetch('https://router.project-osrm.org/route/v1/driving/' + coords + '?overview=full&geometries=geojson&steps=true');
+        const data = await res.json();
+        if (data.code !== 'Ok' || !data.routes.length) { showMcError('No route found', 'Could not find a path between these locations.'); info.style.display = 'none'; return; }
+        const route = data.routes[0];
+        const coords_ll = route.geometry.coordinates.map(c => [c[1], c[0]]);
+        // Dark border for depth
+        routeLine = L.layerGroup([
+          L.polyline(coords_ll, { color: '#661111', weight: 10, opacity: 0.9, lineCap: 'square', lineJoin: 'miter' }),
+          L.polyline(coords_ll, { color: '#ff3333', weight: 6, opacity: 0.9, lineCap: 'square', lineJoin: 'miter' }),
+        ]).addTo(map);
+        map.fitBounds(L.latLngBounds(coords_ll), { padding: [60, 60] });
+        const dist = route.distance;
+        const dur = route.duration;
+        const distStr = dist > 1000 ? (dist / 1000).toFixed(1) + ' km' : Math.round(dist) + ' m';
+        const durMin = Math.round(dur / 60);
+        const durStr = durMin >= 60 ? Math.floor(durMin / 60) + 'h ' + (durMin % 60) + 'min' : durMin + ' min';
+        info.style.display = 'block'; info.style.color = '#2d6324'; info.textContent = distStr + ' | ' + durStr;
+
+        // Render step-by-step directions
+        const stepsDiv = document.getElementById('dir-steps');
+        stepsDiv.innerHTML = '';
+        const legs = route.legs || [];
+        let stepNum = 1;
+        for (const leg of legs) {
+          for (const step of (leg.steps || [])) {
+            if (!step.maneuver || step.distance < 1) continue;
+            const d = step.distance > 1000 ? (step.distance / 1000).toFixed(1) + ' km' : Math.round(step.distance) + ' m';
+            const name = step.name || '';
+            const mod = step.maneuver.modifier || '';
+            const type = step.maneuver.type || '';
+            let instruction = '';
+            if (type === 'depart') instruction = 'Start' + (name ? ' on ' + name : '');
+            else if (type === 'arrive') instruction = 'Arrive' + (name ? ' at ' + name : '');
+            else if (type === 'turn' || type === 'end of road' || type === 'fork') instruction = mod.replace('slight ', '').charAt(0).toUpperCase() + mod.replace('slight ', '').slice(1) + (name ? ' onto ' + name : '');
+            else if (type === 'new name' || type === 'continue') instruction = 'Continue' + (name ? ' on ' + name : '');
+            else if (type === 'merge') instruction = 'Merge' + (name ? ' onto ' + name : '');
+            else if (type === 'roundabout' || type === 'rotary') instruction = 'Roundabout' + (name ? ' onto ' + name : '');
+            else instruction = (type.charAt(0).toUpperCase() + type.slice(1)) + (name ? ' ' + name : '');
+            const loc = step.maneuver.location;
+            const el = document.createElement('div');
+            el.className = 'step-item';
+            el.innerHTML = '<span class="step-num">' + stepNum + '.</span><span class="step-text">' + instruction + '</span><span class="step-dist">' + d + '</span>';
+            el.onclick = () => map.setView([loc[1], loc[0]], 17);
+            stepsDiv.appendChild(el);
+            stepNum++;
+          }
+        }
+        // Show toggle button but keep steps collapsed by default
+        if (stepsDiv.children.length > 0) {
+          const toggle = document.getElementById('dir-steps-toggle');
+          toggle.classList.add('open');
+          toggle.textContent = 'Show ' + stepsDiv.children.length + ' steps \u25BC';
+          stepsDiv.classList.remove('open'); // collapsed by default
+        }
+
+        // Store steps for navigation and show Start button
+        navSteps = [];
+        for (const leg of legs) {
+          for (const step of (leg.steps || [])) {
+            if (!step.maneuver || step.distance < 1) continue;
+            navSteps.push(step);
+          }
+        }
+        if (navSteps.length > 0) {
+          let btn = document.getElementById('nav-start-btn');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'nav-start-btn';
+            btn.textContent = 'Start Navigation';
+            btn.onclick = toggleNavigation;
+            stepsDiv.parentElement.appendChild(btn);
+          } else {
+            btn.textContent = 'Start Navigation';
+            btn.classList.remove('navigating');
+            btn.style.display = 'block';
+          }
+        }
+
+        SFX.play('levelup', 0.25);
+      } catch(e) { showMcError('An error occurred', e.message); info.style.display = 'none'; }
+    }
+
+    // ---- Turn-by-turn navigation ----
+    let navSteps = [];
+    let navActive = false;
+    let navWatchId = null;
+    let navStepIdx = 0;
+
+    function toggleNavigation() {
+      const btn = document.getElementById('nav-start-btn');
+      if (navActive) {
+        stopNavigation();
+        return;
+      }
+      if (!navigator.geolocation || navSteps.length === 0) return;
+
+      navActive = true;
+      navStepIdx = 0;
+      btn.textContent = 'Stop Navigation';
+      btn.classList.add('navigating');
+      document.getElementById('nav-banner').classList.add('open');
+      updateNavBanner();
+
+      navWatchId = navigator.geolocation.watchPosition(
+        pos => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+
+          // Find closest upcoming step
+          let closestIdx = navStepIdx;
+          let closestDist = Infinity;
+          for (let i = navStepIdx; i < navSteps.length; i++) {
+            const loc = navSteps[i].maneuver.location;
+            const d = haversine(lat, lng, loc[1], loc[0]);
+            if (d < closestDist) { closestDist = d; closestIdx = i; }
+            if (d > closestDist * 2 && i > navStepIdx + 1) break;
+          }
+
+          // Advance if within 30m of current step's maneuver point
+          if (closestDist < 30 && closestIdx > navStepIdx) {
+            navStepIdx = closestIdx;
+            SFX.play('orb', 0.2, 1.2);
+          } else if (closestDist < 30 && navStepIdx < navSteps.length - 1) {
+            // Close to current, check next
+            const next = navSteps[navStepIdx + 1];
+            if (next) {
+              const nd = haversine(lat, lng, next.maneuver.location[1], next.maneuver.location[0]);
+              if (nd < closestDist) { navStepIdx++; SFX.play('orb', 0.2, 1.2); }
+            }
+          }
+
+          updateNavBanner();
+          highlightCurrentStep();
+
+          // Center map on user
+          map.setView([lat, lng], map.getZoom(), { animate: true });
+
+          // Check if arrived
+          if (navStepIdx >= navSteps.length - 1) {
+            const lastStep = navSteps[navSteps.length - 1];
+            const dEnd = haversine(lat, lng, lastStep.maneuver.location[1], lastStep.maneuver.location[0]);
+            if (dEnd < 50) {
+              document.getElementById('nav-direction').textContent = 'You have arrived!';
+              document.getElementById('nav-distance').textContent = '';
+              SFX.play('levelup', 0.4);
+              setTimeout(stopNavigation, 5000);
+            }
+          }
+        },
+        err => { console.error('Nav GPS error', err); },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+      );
+    }
+
+    function stopNavigation() {
+      navActive = false;
+      if (navWatchId !== null) { navigator.geolocation.clearWatch(navWatchId); navWatchId = null; }
+      document.getElementById('nav-banner').classList.remove('open');
+      const btn = document.getElementById('nav-start-btn');
+      if (btn) { btn.textContent = 'Start Navigation'; btn.classList.remove('navigating'); }
+      document.querySelectorAll('.step-item.active').forEach(el => el.classList.remove('active'));
+    }
+
+    function updateNavBanner() {
+      if (navStepIdx >= navSteps.length) return;
+      const step = navSteps[navStepIdx];
+      const name = step.name || '';
+      const mod = step.maneuver.modifier || '';
+      const type = step.maneuver.type || '';
+      let instruction = '';
+      if (type === 'depart') instruction = 'Head ' + (mod || 'forward') + (name ? ' on ' + name : '');
+      else if (type === 'arrive') instruction = 'Arrive' + (name ? ' at ' + name : '');
+      else if (type === 'turn' || type === 'end of road' || type === 'fork') instruction = mod.charAt(0).toUpperCase() + mod.slice(1) + (name ? ' onto ' + name : '');
+      else if (type === 'new name' || type === 'continue') instruction = 'Continue' + (name ? ' on ' + name : '');
+      else if (type === 'merge') instruction = 'Merge' + (name ? ' onto ' + name : '');
+      else if (type === 'roundabout' || type === 'rotary') instruction = 'Roundabout' + (name ? ', exit to ' + name : '');
+      else instruction = (type.charAt(0).toUpperCase() + type.slice(1)) + (name ? ' ' + name : '');
+      const d = step.distance;
+      const distStr = d > 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d) + ' m';
+      document.getElementById('nav-direction').textContent = instruction;
+      document.getElementById('nav-distance').textContent = distStr;
+    }
+
+    function highlightCurrentStep() {
+      const items = document.querySelectorAll('.step-item');
+      items.forEach((el, i) => el.classList.toggle('active', i === navStepIdx));
+      if (items[navStepIdx]) items[navStepIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // ---- Player location marker ----
+    function makePlayerIcon() {
+      const px = 3, c = document.createElement('canvas');
+      c.width = 21; c.height = 24;
+      const ctx = c.getContext('2d');
+      const rows = [[0,0,0,1,0,0,0],[0,0,1,2,1,0,0],[0,1,2,2,2,1,0],[1,2,2,2,2,2,1],[1,2,2,3,2,2,1],[1,2,2,2,2,2,1],[0,1,2,2,2,1,0],[0,0,1,1,1,0,0]];
+      const colors = ['rgba(0,0,0,0)', '#111', '#f0f0f0', '#b0b0b0'];
+      for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[y].length; x++) { if (rows[y][x] === 0) continue; ctx.fillStyle = colors[rows[y][x]]; ctx.fillRect(x * px, y * px, px, px); }
+      return c.toDataURL();
+    }
+
+    let playerMarker = null, watchId = null, heading = 0, locateActive = false;
+
+    function toggleLocate() {
+      SFX.play('click', 0.4);
+      const btn = document.getElementById('locate-btn');
+      if (locateActive) {
+        locateActive = false; btn.classList.remove('active');
+        if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+        if (playerMarker) { map.removeLayer(playerMarker); playerMarker = null; }
+        window.removeEventListener('deviceorientation', onOrientation);
+        window.removeEventListener('deviceorientationabsolute', onOrientation);
+        return;
+      }
+      if (!navigator.geolocation) return;
+      locateActive = true; btn.classList.add('active');
+      const playerIcon = L.icon({ iconUrl: makePlayerIcon(), iconSize: [21, 24], iconAnchor: [10, 12], className: 'player-marker' });
+      watchId = navigator.geolocation.watchPosition(
+        pos => {
+          const lat = pos.coords.latitude, lng = pos.coords.longitude;
+          if (pos.coords.heading && pos.coords.heading > 0) heading = pos.coords.heading;
+          if (!playerMarker) {
+            playerMarker = L.marker([lat, lng], { icon: playerIcon, zIndexOffset: 9999 }).addTo(map);
+            const dist = haversine(map.getCenter().lat, map.getCenter().lng, lat, lng);
+            if (dist > 5000) { portalTo(lat, lng); }
+            else { map.setView([lat, lng], 16); }
+          }
+          else playerMarker.setLatLng([lat, lng]);
+          updateMarkerRotation();
+        },
+        () => { locateActive = false; btn.classList.remove('active'); },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+      );
+      if ('ondeviceorientationabsolute' in window) window.addEventListener('deviceorientationabsolute', onOrientation);
+      else if ('ondeviceorientation' in window) window.addEventListener('deviceorientation', onOrientation);
+    }
+
+    function onOrientation(e) {
+      let h = e.webkitCompassHeading !== undefined ? e.webkitCompassHeading : e.alpha !== null ? (360 - e.alpha) % 360 : null;
+      if (h !== null) { heading = h; updateMarkerRotation(); }
+    }
+
+    function updateMarkerRotation() {
+      if (!playerMarker) return;
+      const el = playerMarker.getElement();
+      if (el) el.style.transform = el.style.transform.replace(/rotate\([^)]*\)/, '') + ' rotate(' + heading + 'deg)';
+    }
+
+    // ---- Sound hooks for zoom, hover, and search focus ----
+    map.on('zoomend', () => { SFX.play('wood_click', 0.15, 0.8 + Math.random() * 0.4); });
+
+    // Click sound for autocomplete items on hover
+    document.addEventListener('mouseenter', e => {
+      if (e.target.classList && e.target.classList.contains('ac-item')) {
+        SFX.play('click', 0.1, 1.4 + Math.random() * 0.3);
+      }
+    }, true);
+
+    // Click sound for direction result selection
+    document.addEventListener('mousedown', e => {
+      const el = e.target.closest('.dir-btn, .place-btn, .dir-remove');
+      if (el && !el.id.match(/dir-close|dir-swap|dir-add-stop|directions-btn|place-close-btn/)) {
+        SFX.play('click', 0.3);
+      }
+    }, true);
+
+    // Initial page load sound
+    window.addEventListener('load', () => { setTimeout(() => SFX.play('orb', 0.2, 1.5), 500); });
+
+    // ---- Settings system ----
+    const settings = {
+      sfx: true,
+      ambient: false,
+      night: false,
+      pois: false,
+      frame: true,
+      weather: true,
+      forceday: false,
+      forcenight: false,
+      forcerain: false,
+      forcesnow: false,
+    };
+    let masterVolume = 0.5;
+
+    // Load saved settings
+    try {
+      const saved = JSON.parse(localStorage.getItem('mc-map-settings') || '{}');
+      Object.assign(settings, saved);
+      masterVolume = saved._volume ?? 0.5;
+    } catch {}
+
+    function saveSettings() {
+      localStorage.setItem('mc-map-settings', JSON.stringify({ ...settings, _volume: masterVolume }));
+    }
+
+    // Update button label text for a toggle
+    function updateToggleBtn(key) {
+      const el = document.getElementById('toggle-' + key);
+      if (!el) return;
+      const span = el.querySelector('.btn-val');
+      if (span) {
+        span.textContent = settings[key] ? 'ON' : 'OFF';
+        span.classList.toggle('off', !settings[key]);
+      }
+    }
+
+    // Update volume slider visual
+    function updateVolumeSlider() {
+      const pct = Math.round(masterVolume * 100);
+      document.getElementById('vol-fill').style.width = pct + '%';
+      document.getElementById('vol-knob').style.left = Math.max(0, (pct / 100) * (400 - 14)) + 'px';
+      document.getElementById('vol-label').textContent = 'Volume: ' + pct + '%';
+    }
+
+    // Apply initial state
+    function applySettings() {
+      Object.keys(settings).forEach(updateToggleBtn);
+      updateVolumeSlider();
+      document.getElementById('night-overlay').classList.toggle('on', settings.night);
+      document.querySelector('.map-frame').style.display = settings.frame ? '' : 'none';
+      if (settings.pois !== poisActive) togglePOIs();
+      if (settings.ambient) startAmbient(); else stopAmbient();
+    }
+
+    function openSettings() {
+      SFX.play('click', 0.4);
+      updateMenuSignOut();
+      document.getElementById('settings-overlay').classList.add('open');
+    }
+
+    function closeSettings() {
+      SFX.play('click', 0.4);
+      document.getElementById('settings-overlay').classList.remove('open');
+    }
+
+    // Sign out from pause menu
+    async function menuSignOut() {
+      await fetch('/api/logout', { method: 'POST' });
+      currentPlayer = null;
+      updateTitleForPlayer();
+      updateMenuSignOut();
+      SFX.play('click', 0.4);
+      closeSettings();
+    }
+
+    // Back to title screen
+    function backToTitle() {
+      SFX.play('chestclosed', 0.35);
+      closeSettings();
+      document.getElementById('title-screen').classList.remove('hidden');
+    }
+
+    // Show/hide sign out button based on login state
+    function updateMenuSignOut() {
+      const btn = document.getElementById('menu-signout');
+      if (btn) btn.style.display = currentPlayer ? '' : 'none';
+    }
+
+    function toggleSetting(key) {
+      settings[key] = !settings[key];
+      SFX.play('click', 0.4);
+
+      // Force day/night are mutually exclusive
+      if (key === 'forceday' && settings.forceday) { settings.forcenight = false; updateToggleBtn('forcenight'); }
+      if (key === 'forcenight' && settings.forcenight) { settings.forceday = false; updateToggleBtn('forceday'); }
+      // Force rain/snow are mutually exclusive
+      if (key === 'forcerain' && settings.forcerain) { settings.forcesnow = false; updateToggleBtn('forcesnow'); }
+      if (key === 'forcesnow' && settings.forcesnow) { settings.forcerain = false; updateToggleBtn('forcerain'); }
+
+      updateToggleBtn(key);
+
+      if (key === 'night') {
+        const overlay = document.getElementById('night-overlay');
+        if (settings.night) { overlay.classList.add('on'); updateClock(); }
+        else { overlay.classList.remove('on'); overlay.style.background = ''; }
+      }
+      if (key === 'frame') document.querySelector('.map-frame').style.display = settings.frame ? '' : 'none';
+      if (key === 'pois' && settings.pois !== poisActive) togglePOIs();
+      if (key === 'ambient') { if (settings.ambient) startAmbient(); else stopAmbient(); }
+      if (key === 'weather') {
+        document.getElementById('clock-hud').style.display = settings.weather ? '' : 'none';
+        if (!settings.weather) stopWeatherParticles();
+      }
+      // Cheat: force weather particles
+      if (key === 'forcerain') { if (settings.forcerain) startWeatherParticles('rain'); else stopWeatherParticles(); }
+      if (key === 'forcesnow') { if (settings.forcesnow) startWeatherParticles('snow'); else stopWeatherParticles(); }
+      // Cheat: force time of day
+      if (key === 'forceday' || key === 'forcenight') applyForcedTOD();
+      saveSettings();
+    }
+
+    function applyForcedTOD() {
+      const overlay = document.getElementById('night-overlay');
+      if (settings.forceday) {
+        overlay.classList.add('on');
+        overlay.style.background = 'rgba(0,0,0,0)';
+      } else if (settings.forcenight) {
+        overlay.classList.add('on');
+        overlay.style.background = 'rgba(10,10,40,0.5)';
+      } else {
+        if (settings.night) updateClock();
+        else { overlay.classList.remove('on'); overlay.style.background = ''; }
+      }
+    }
+
+    function openCheats() {
+      SFX.play('click', 0.4);
+      document.getElementById('settings-overlay').classList.remove('open');
+      document.getElementById('cheats-overlay').classList.add('open');
+    }
+
+    function closeCheats() {
+      SFX.play('click', 0.4);
+      document.getElementById('cheats-overlay').classList.remove('open');
+      document.getElementById('settings-overlay').classList.add('open');
+    }
+
+    function clearTileCache() {
+      SFX.play('levelup', 0.3);
+      if (typeof caches !== 'undefined') caches.keys().then(k => k.forEach(c => caches.delete(c)));
+      mcLayer.redraw();
+    }
+
+    // Volume slider drag
+    function startVolumeDrag(e) {
+      e.preventDefault();
+      const slider = document.getElementById('volume-slider');
+      function update(clientX) {
+        const rect = slider.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        masterVolume = pct;
+        if (ambientGain) ambientGain.gain.value = masterVolume * 0.15;
+        updateVolumeSlider();
+        saveSettings();
+      }
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      update(clientX);
+      function onMove(ev) {
+        const cx = ev.touches ? ev.touches[0].clientX : ev.clientX;
+        update(cx);
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onUp);
+        SFX.play('click', 0.2);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.addEventListener('touchmove', onMove);
+      document.addEventListener('touchend', onUp);
+    }
+
+    // Override SFX.play to respect settings
+    const _origPlay = SFX.play;
+    SFX.play = function(name, vol, rate) {
+      if (!settings.sfx) return;
+      _origPlay(name, (vol || 0.5) * masterVolume * 2, rate);
+    };
+
+    // Close on Escape or clicking backdrop
+    document.getElementById('settings-overlay').addEventListener('click', e => {
+      if (e.target.id === 'settings-overlay') closeSettings();
+    });
+    document.getElementById('cheats-overlay').addEventListener('click', e => {
+      if (e.target.id === 'cheats-overlay') closeCheats();
+    });
+    document.addEventListener('keydown', e => {
+      // Don't handle keys when typing in an input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      if (e.key === 'Escape') {
+        if (document.getElementById('title-screen') && !document.getElementById('title-screen').classList.contains('hidden')) return;
+        if (document.getElementById('auth-screen').classList.contains('open')) { hideAuth(); return; }
+        if (document.getElementById('cheats-overlay').classList.contains('open')) { closeCheats(); return; }
+        if (document.getElementById('settings-overlay').classList.contains('open')) { closeSettings(); return; }
+        // Open pause menu
+        openSettings();
+        return;
+      }
+
+      // WASD panning
+      const panAmount = 200;
+      if (e.key === 'w' || e.key === 'W') map.panBy([0, -panAmount]);
+      else if (e.key === 's' || e.key === 'S') map.panBy([0, panAmount]);
+      else if (e.key === 'a' || e.key === 'A') map.panBy([-panAmount, 0]);
+      else if (e.key === 'd' || e.key === 'D') map.panBy([panAmount, 0]);
+    });
+
+    // ---- Looping Ambient Sound System ----
+    // Uses setTargetAtTime for smooth audio-thread crossfading
+    let ambientCtx = null;
+    let ambientGain = null;
+    let ambientPlaying = false;
+    let ambientLayers = {};
+    let birdTimer = null;
+    let birdBuffers = [];
+    let ambientPoll = null;
+
+    function initAmbientCtx() {
+      if (ambientCtx) return;
+      ambientCtx = new (window.AudioContext || window.webkitAudioContext)();
+      ambientGain = ambientCtx.createGain();
+      ambientGain.gain.value = masterVolume * 0.3;
+      ambientGain.connect(ambientCtx.destination);
+    }
+
+    async function loadAmbientBuffer(name) {
+      const res = await fetch('/sounds/ambient/' + name + '.ogg');
+      if (!res.ok) throw new Error(name + ': ' + res.status);
+      return ambientCtx.decodeAudioData(await res.arrayBuffer());
+    }
+
+    function createLoop(buffer, baseVol) {
+      const src = ambientCtx.createBufferSource();
+      const gain = ambientCtx.createGain();
+      src.buffer = buffer;
+      src.loop = true;
+      gain.gain.setValueAtTime(0, ambientCtx.currentTime);
+      src.connect(gain).connect(ambientGain);
+      src.start();
+      return { src, gain, baseVol };
+    }
+
+    function rampLayer(layer, target) {
+      if (!layer || !ambientCtx) return;
+      const vol = target * layer.baseVol;
+      layer.gain.gain.cancelScheduledValues(ambientCtx.currentTime);
+      layer.gain.gain.setValueAtTime(layer.gain.gain.value, ambientCtx.currentTime);
+      layer.gain.gain.setTargetAtTime(vol, ambientCtx.currentTime, 0.5);
+    }
+
+    function detectVisibleTerrain() {
+      let waterPct = 0, greenPct = 0;
+      try {
+        const pane = document.querySelector('.leaflet-tile-pane');
+        if (!pane) return { waterPct, greenPct };
+        const c = document.createElement('canvas');
+        c.width = 32; c.height = 32;
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        let wPx = 0, gPx = 0, total = 0, sampled = 0;
+        for (const img of pane.querySelectorAll('img')) {
+          if (sampled >= 6) break;
+          if (!img.complete || !img.naturalWidth) continue;
+          if (!(img.src || '').includes('/tiles/')) continue;
+          try {
+            ctx.clearRect(0, 0, 32, 32);
+            ctx.drawImage(img, 0, 0, 32, 32);
+            const d = ctx.getImageData(0, 0, 32, 32).data;
+            sampled++;
+            for (let i = 0; i < d.length; i += 16) {
+              if (d[i+3] < 100) continue;
+              total++;
+              const r = d[i], g = d[i+1], b = d[i+2];
+              if (b > 150 && b > r * 1.5 && b > g * 1.2) wPx++;
+              else if (g > 100 && g > r * 1.1 && g > b * 1.2) gPx++;
+            }
+          } catch(e) { console.warn('[ambient] canvas:', e.name); }
+        }
+        if (total > 0) { waterPct = wPx / total; greenPct = gPx / total; }
+      } catch(e) { console.warn('[ambient] detect:', e); }
+      return { waterPct, greenPct };
+    }
+
+    function updateAmbientMix() {
+      if (!ambientPlaying || !ambientCtx) return;
+      const { waterPct, greenPct } = detectVisibleTerrain();
+
+      // Water: only audible when >10% water visible, full at >40%
+      const waterVol = waterPct < 0.10 ? 0 : Math.min(1, (waterPct - 0.10) / 0.30);
+      rampLayer(ambientLayers.water, waterVol);
+
+      // Nature: only audible when >55% green (grass default is ~50%), full at >75%
+      const natureVol = greenPct < 0.55 ? 0 : Math.min(1, (greenPct - 0.55) / 0.20);
+      rampLayer(ambientLayers.nature, natureVol);
+
+      // Birds only in clearly green areas
+      if (greenPct > 0.60 && !birdTimer) scheduleBird();
+      if (greenPct <= 0.60 && birdTimer) { clearTimeout(birdTimer); birdTimer = null; }
+    }
+
+    function scheduleBird() {
+      if (!ambientPlaying) { birdTimer = null; return; }
+      birdTimer = setTimeout(() => {
+        if (birdBuffers.length && ambientCtx) {
+          const buf = birdBuffers[Math.random() * birdBuffers.length | 0];
+          const s = ambientCtx.createBufferSource();
+          const g = ambientCtx.createGain();
+          s.buffer = buf; s.playbackRate.value = 0.9 + Math.random() * 0.3;
+          g.gain.value = 0.5; s.connect(g).connect(ambientGain); s.start();
+        }
+        if (ambientPlaying) scheduleBird();
+      }, 5000 + Math.random() * 15000);
+    }
+
+    map.on('moveend', () => { setTimeout(updateAmbientMix, 600); });
+
+    async function startAmbient() {
+      if (ambientPlaying) return;
+      initAmbientCtx();
+      if (ambientCtx.state === 'suspended') await ambientCtx.resume();
+      try {
+        const [wBuf, nBuf] = await Promise.all([loadAmbientBuffer('water_loop'), loadAmbientBuffer('nature_loop')]);
+        ambientLayers.water = createLoop(wBuf, 0.6);
+        ambientLayers.nature = createLoop(nBuf, 0.4);
+        birdBuffers = (await Promise.all(['parrot-idle1','parrot-idle2','parrot-idle3','parrot-idle4'].map(n => loadAmbientBuffer(n).catch(() => null)))).filter(Boolean);
+        ambientPlaying = true;
+        updateAmbientMix();
+        ambientPoll = setInterval(updateAmbientMix, 4000);
+        console.log('[ambient] STARTED — loops running, poll every 4s');
+      } catch(e) { console.error('[ambient] FAILED:', e); ambientPlaying = false; }
+    }
+
+    function stopAmbient() {
+      ambientPlaying = false;
+      if (birdTimer) { clearTimeout(birdTimer); birdTimer = null; }
+      if (ambientPoll) { clearInterval(ambientPoll); ambientPoll = null; }
+      for (const l of Object.values(ambientLayers)) { try { l.src.stop(); } catch(e) {} }
+      ambientLayers = {}; birdBuffers = [];
+    }
+
+    // Apply saved settings on load
+    window.addEventListener('load', () => {
+      setTimeout(applySettings, 100);
+      // Clear old service workers and caches, then register fresh
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          regs.forEach(function(r) { r.unregister(); });
+          return caches.keys();
+        }).then(function(keys) {
+          return Promise.all(keys.map(function(k) { return caches.delete(k); }));
+        }).then(function() {
+          navigator.serviceWorker.register('/sw.js');
+        }).catch(function() {});
+      }
+    });
+
+    // ---- Nether portal transition ----
+    function portalTo(lat, lng) {
+      const overlay = document.getElementById('portal-overlay');
+      overlay.classList.add('active');
+      SFX.play('chestopen', 0.3);
+      setTimeout(() => { map.setView([lat, lng], 16, { animate: false }); }, 400);
+      setTimeout(() => { overlay.classList.remove('active'); }, 1200);
+    }
+
+    // Portal for distant searches (>5km)
+    const _origSelectPlace = selectPlace;
+    selectPlace = function(lat, lng, name, sub) {
+      const center = map.getCenter();
+      const dist = haversine(center.lat, center.lng, lat, lng);
+      if (dist > 5000) {
+        const overlay = document.getElementById('portal-overlay');
+        overlay.classList.add('active');
+        SFX.play('chestopen', 0.3);
+        setTimeout(() => { _origSelectPlace(lat, lng, name, sub); }, 400);
+        setTimeout(() => { overlay.classList.remove('active'); }, 1200);
+      } else {
+        _origSelectPlace(lat, lng, name, sub);
+      }
+    };
+
+    // ---- Home / Spawn point ----
+    let homeLocation = JSON.parse(localStorage.getItem('mc-home') || 'null');
+    let homeMarker = null;
+    let homeHoldTimer = null;
+
+    function updateHomeBtn() {
+      const btn = document.getElementById('home-btn');
+      if (!btn) return;
+      btn.classList.toggle('has-home', !!homeLocation);
+      btn.title = homeLocation ? 'Click: go home | Hold: set new spawn' : 'Hold to set spawn point';
+    }
+    updateHomeBtn();
+
+    function showHomeMarker() {
+      if (homeMarker) map.removeLayer(homeMarker);
+      if (!homeLocation) return;
+      const icon = L.divIcon({
+        className: 'poi-marker',
+        html: '<div style="font-size:18px;text-align:center">&#x1F6CF;</div><span class="poi-label">Home</span>',
+        iconSize: [0, 0], iconAnchor: [0, 10],
+      });
+      homeMarker = L.marker([homeLocation.lat, homeLocation.lng], { icon, zIndexOffset: 8000 }).addTo(map);
+    }
+    showHomeMarker();
+
+    function handleHome() {}
+
+    const homeBtn = document.getElementById('home-btn');
+    if (homeBtn) {
+      homeBtn.addEventListener('mousedown', () => {
+        homeHoldTimer = setTimeout(() => {
+          homeHoldTimer = 'set';
+          homeLocation = { lat: map.getCenter().lat, lng: map.getCenter().lng };
+          localStorage.setItem('mc-home', JSON.stringify(homeLocation));
+          updateHomeBtn(); showHomeMarker();
+          SFX.play('levelup', 0.3);
+        }, 800);
+      });
+      homeBtn.addEventListener('mouseup', () => {
+        if (homeHoldTimer === 'set') { homeHoldTimer = null; return; }
+        clearTimeout(homeHoldTimer); homeHoldTimer = null;
+        if (homeLocation) portalTo(homeLocation.lat, homeLocation.lng);
+        else SFX.play('click', 0.3);
+      });
+      homeBtn.addEventListener('mouseleave', () => {
+        if (homeHoldTimer !== 'set') clearTimeout(homeHoldTimer);
+        homeHoldTimer = null;
+      });
+      homeBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        homeHoldTimer = setTimeout(() => {
+          homeHoldTimer = 'set';
+          homeLocation = { lat: map.getCenter().lat, lng: map.getCenter().lng };
+          localStorage.setItem('mc-home', JSON.stringify(homeLocation));
+          updateHomeBtn(); showHomeMarker();
+          SFX.play('levelup', 0.3);
+        }, 800);
+      });
+      homeBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        if (homeHoldTimer === 'set') { homeHoldTimer = null; return; }
+        clearTimeout(homeHoldTimer); homeHoldTimer = null;
+        if (homeLocation) portalTo(homeLocation.lat, homeLocation.lng);
+      });
+    }
+
+    // ---- Tile loading animation (chunk loading) ----
+    // Dirt texture placeholder while tiles load
+    mcLayer.on('tileloadstart', (e) => {
+      const tile = e.tile;
+      tile.style.opacity = '0';
+      tile.style.transition = 'none';
+    });
+    mcLayer.on('tileload', (e) => {
+      const tile = e.tile;
+      tile.style.transition = 'opacity 0.35s ease-in';
+      requestAnimationFrame(() => { tile.style.opacity = '1'; });
+    });
+    mcLayer.on('tileerror', (e) => {
+      // Show dirt texture for failed tiles
+      const tile = e.tile;
+      tile.style.opacity = '1';
+      tile.style.transition = 'none';
+    });
+
+    // ---- Background tile prefetcher ----
+    // After visible tiles load, keep fetching outward in expanding rings
+    // to fill the surrounding area (approx zip-code sized region)
+    (function initPrefetcher() {
+      const PREFETCH_RINGS = 8; // rings beyond visible bounds (~8 tiles out = ~2km at z16)
+      const PREFETCH_CONCURRENCY = 2; // simultaneous requests (gentle on server)
+      const PREFETCH_DELAY = 300; // ms between batches
+      let prefetchQueue = [];
+      let prefetching = false;
+      let prefetchTimer = null;
+      const prefetched = new Set(); // track already-fetched tile keys
+
+      function getTileRange() {
+        const bounds = map.getPixelBounds();
+        const tileSize = 256;
+        const z = Math.min(map.getZoom(), 16);
+        return {
+          z: z,
+          minX: Math.floor(bounds.min.x / tileSize),
+          maxX: Math.floor(bounds.max.x / tileSize),
+          minY: Math.floor(bounds.min.y / tileSize),
+          maxY: Math.floor(bounds.max.y / tileSize),
+        };
+      }
+
+      function schedulePrefetch() {
+        if (prefetchTimer) clearTimeout(prefetchTimer);
+        // Wait for visible tiles to finish loading first
+        prefetchTimer = setTimeout(startPrefetch, 2000);
+      }
+
+      function startPrefetch() {
+        if (activeLayer !== mcLayer) return;
+        const z = Math.min(Math.round(map.getZoom()), 16);
+        if (z < 14) return; // only prefetch at detail zoom levels
+
+        const range = getTileRange();
+        const queue = [];
+
+        // Build rings outward from visible area
+        for (let ring = 1; ring <= PREFETCH_RINGS; ring++) {
+          const tiles = [];
+          const minX = range.minX - ring;
+          const maxX = range.maxX + ring;
+          const minY = range.minY - ring;
+          const maxY = range.maxY + ring;
+
+          // Top and bottom rows
+          for (let x = minX; x <= maxX; x++) {
+            tiles.push({ x, y: minY, z });
+            tiles.push({ x, y: maxY, z });
+          }
+          // Left and right columns (skip corners already added)
+          for (let y = minY + 1; y < maxY; y++) {
+            tiles.push({ x: minX, y, z });
+            tiles.push({ x: maxX, y, z });
+          }
+
+          queue.push(...tiles);
+        }
+
+        // Filter out already-prefetched tiles
+        prefetchQueue = queue.filter(t => {
+          const key = `${t.z}_${t.x}_${t.y}`;
+          return !prefetched.has(key);
+        });
+
+        if (prefetchQueue.length > 0 && !prefetching) {
+          console.log(`[prefetch] Queued ${prefetchQueue.length} tiles in ${PREFETCH_RINGS} rings`);
+          processPrefetchQueue();
+        }
+      }
+
+      async function processPrefetchQueue() {
+        prefetching = true;
+        while (prefetchQueue.length > 0) {
+          // If user panned, restart with new center
+          if (prefetchTimer === 'restart') { prefetchTimer = null; prefetching = false; schedulePrefetch(); return; }
+
+          const batch = prefetchQueue.splice(0, PREFETCH_CONCURRENCY);
+          await Promise.all(batch.map(async (t) => {
+            const key = `${t.z}_${t.x}_${t.y}`;
+            if (prefetched.has(key)) return;
+            prefetched.add(key);
+            try {
+              // Just fetch to warm server cache — don't need the response
+              await fetch(`/tiles/${t.z}/${t.x}/${t.y}.png?v=${Date.now()}`);
+            } catch {}
+          }));
+          await new Promise(r => setTimeout(r, PREFETCH_DELAY));
+        }
+        prefetching = false;
+      }
+
+      // Trigger prefetch after map settles
+      map.on('moveend', () => {
+        if (prefetching) { prefetchTimer = 'restart'; }
+        else schedulePrefetch();
+      });
+      map.on('zoomend', () => {
+        prefetched.clear(); // new zoom = new tile coords
+        if (prefetching) { prefetchTimer = 'restart'; }
+        else schedulePrefetch();
+      });
+
+      // Initial prefetch
+      schedulePrefetch();
+    })();
+
+    // ---- POI overlay ----
+    const POI_ICONS = {
+      restaurant: 'restaurant', fast_food: 'restaurant', food_court: 'restaurant',
+      cafe: 'cafe', coffee: 'cafe',
+      supermarket: 'supermarket', convenience: 'supermarket', grocery: 'supermarket', greengrocer: 'supermarket',
+      fuel: 'fuel',
+      hospital: 'hospital', clinic: 'hospital', doctors: 'hospital', dentist: 'hospital',
+      pharmacy: 'hospital',
+      school: 'school', university: 'school', college: 'school', kindergarten: 'school',
+      bank: 'bank', atm: 'bank',
+      cinema: 'cinema', theatre: 'cinema',
+      place_of_worship: 'worship',
+      library: 'school',
+      post_office: 'post_office',
+      gym: 'gym', sports_centre: 'gym', fitness_centre: 'gym',
+      fire_station: 'fire_station',
+      clothes: 'shop', shoes: 'shop', boutique: 'shop', mall: 'shop',
+      electronics: 'shop', hardware: 'shop', furniture: 'shop',
+      bakery: 'cafe', ice_cream: 'cafe',
+      bar: 'cafe', pub: 'cafe', nightclub: 'cinema',
+    };
+
+    let poisActive = false;
+    let poiLayer = L.layerGroup();
+    let poiCache = new Set();
+    let poiTimer = null;
+    const pinImgCache = {};
+
+    // Draw a pixel art map pin with an item icon inside
+    function makePoiPin(iconFile, callback) {
+      const cacheKey = iconFile;
+      if (pinImgCache[cacheKey]) { callback(pinImgCache[cacheKey]); return; }
+
+      const px = 2;
+      const W = 14, H = 18; // grid cells
+      const c = document.createElement('canvas');
+      c.width = W * px; c.height = H * px;
+      const ctx = c.getContext('2d');
+
+      // Pin shape: 0=transparent, 1=dark red outline, 2=red fill, 3=bright red highlight, 4=icon area (white)
+      const pin = [
+        [0,0,0,0,0,1,1,1,1,0,0,0,0,0],
+        [0,0,0,1,1,2,2,2,2,1,1,0,0,0],
+        [0,0,1,2,3,3,3,3,3,3,2,1,0,0],
+        [0,1,2,3,4,4,4,4,4,4,3,2,1,0],
+        [0,1,2,3,4,4,4,4,4,4,3,2,1,0],
+        [1,2,3,3,4,4,4,4,4,4,3,3,2,1],
+        [1,2,3,3,4,4,4,4,4,4,3,3,2,1],
+        [1,2,3,3,4,4,4,4,4,4,3,3,2,1],
+        [1,2,3,3,4,4,4,4,4,4,3,3,2,1],
+        [0,1,2,3,4,4,4,4,4,4,3,2,1,0],
+        [0,1,2,3,4,4,4,4,4,4,3,2,1,0],
+        [0,0,1,2,3,3,3,3,3,3,2,1,0,0],
+        [0,0,0,1,2,2,2,2,2,2,1,0,0,0],
+        [0,0,0,0,1,2,2,2,2,1,0,0,0,0],
+        [0,0,0,0,0,1,2,2,1,0,0,0,0,0],
+        [0,0,0,0,0,0,1,1,0,0,0,0,0,0],
+        [0,0,0,0,0,0,1,1,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+      ];
+      const colors = ['rgba(0,0,0,0)', '#6b1010', '#cc2222', '#ee4444', '#fff'];
+
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const v = pin[y][x];
+          if (v === 0) continue;
+          ctx.fillStyle = colors[v];
+          ctx.fillRect(x * px, y * px, px, px);
+        }
+      }
+
+      // Load item icon and draw it centered in the pin
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        // Icon area is roughly cols 4-9, rows 3-10 (6x8 cells = 12x16 px)
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, 4 * px, 3 * px, 6 * px, 6 * px);
+        const dataUrl = c.toDataURL();
+        pinImgCache[cacheKey] = dataUrl;
+        callback(dataUrl);
+      };
+      img.onerror = () => {
+        const dataUrl = c.toDataURL();
+        pinImgCache[cacheKey] = dataUrl;
+        callback(dataUrl);
+      };
+      img.src = '/icons/' + iconFile + '.png';
+    }
+
+    function togglePOIs() {
+      const btn = document.getElementById('poi-toggle');
+      poisActive = !poisActive;
+      btn.classList.toggle('active', poisActive);
+      if (poisActive) {
+        poiLayer.addTo(map);
+        loadPOIs();
+        map.on('moveend', onMapMovePOI);
+      } else {
+        map.off('moveend', onMapMovePOI);
+        poiLayer.clearLayers();
+        poiCache.clear();
+        map.removeLayer(poiLayer);
+      }
+    }
+
+    function onMapMovePOI() {
+      clearTimeout(poiTimer);
+      poiTimer = setTimeout(loadPOIs, 300);
+    }
+
+    async function loadPOIs() {
+      if (!poisActive) return;
+      const z = map.getZoom();
+      if (z < 15) { poiLayer.clearLayers(); poiCache.clear(); return; }
+
+      const b = map.getBounds();
+      try {
+        const res = await fetch('/pois?s=' + b.getSouth().toFixed(5) + '&w=' + b.getWest().toFixed(5) + '&n=' + b.getNorth().toFixed(5) + '&e=' + b.getEast().toFixed(5));
+        const pois = await res.json();
+        // Limit to 100 closest to center
+        const center = map.getCenter();
+        pois.sort((a, b) => {
+          const da = (a.lat - center.lat) ** 2 + (a.lng - center.lng) ** 2;
+          const db = (b.lat - center.lat) ** 2 + (b.lng - center.lng) ** 2;
+          return da - db;
+        });
+        const limited = pois.slice(0, 100);
+        for (const poi of limited) {
+          const key = poi.lat.toFixed(5) + ',' + poi.lng.toFixed(5);
+          if (poiCache.has(key)) continue;
+          poiCache.add(key);
+
+          const iconFile = POI_ICONS[poi.type] || 'default';
+          const safeName = poi.name.replace(/</g, '&lt;').substring(0, 25);
+
+          makePoiPin(iconFile, (pinUrl) => {
+            const icon = L.divIcon({
+              className: 'poi-marker',
+              html: '<div class="poi-pin"><img src="' + pinUrl + '" width="28" height="36" style="image-rendering:pixelated"/></div><span class="poi-label">' + safeName + '</span>',
+              iconSize: [0, 0],
+              iconAnchor: [14, 36],
+            });
+            L.marker([poi.lat, poi.lng], { icon: icon, zIndexOffset: 1000 }).addTo(poiLayer);
+          });
+        }
+      } catch(e) { console.error('POI load error', e); }
+    }
+
+    // ---- Minecraft Clock + Weather + Time-of-Day Lighting ----
+    const WMO_CONDITIONS = {
+      0: { text: 'Clear', icon: '☀️', rain: false, snow: false },
+      1: { text: 'Mostly Clear', icon: '🌤️', rain: false, snow: false },
+      2: { text: 'Partly Cloudy', icon: '⛅', rain: false, snow: false },
+      3: { text: 'Overcast', icon: '☁️', rain: false, snow: false },
+      45: { text: 'Foggy', icon: '🌫️', rain: false, snow: false },
+      48: { text: 'Foggy', icon: '🌫️', rain: false, snow: false },
+      51: { text: 'Light Drizzle', icon: '🌦️', rain: true, snow: false },
+      53: { text: 'Drizzle', icon: '🌦️', rain: true, snow: false },
+      55: { text: 'Heavy Drizzle', icon: '🌧️', rain: true, snow: false },
+      61: { text: 'Light Rain', icon: '🌦️', rain: true, snow: false },
+      63: { text: 'Rain', icon: '🌧️', rain: true, snow: false },
+      65: { text: 'Heavy Rain', icon: '🌧️', rain: true, snow: false },
+      71: { text: 'Light Snow', icon: '🌨️', rain: false, snow: true },
+      73: { text: 'Snow', icon: '❄️', rain: false, snow: true },
+      75: { text: 'Heavy Snow', icon: '❄️', rain: false, snow: true },
+      80: { text: 'Rain Showers', icon: '🌧️', rain: true, snow: false },
+      81: { text: 'Heavy Showers', icon: '🌧️', rain: true, snow: false },
+      95: { text: 'Thunderstorm', icon: '⛈️', rain: true, snow: false },
+    };
+
+    let currentWeather = null;
+    let weatherParticles = [];
+    let weatherAnimFrame = null;
+
+    // Pre-load clock frames
+    const clockFrames = [];
+    for (let i = 0; i < 64; i++) {
+      const img = new Image();
+      img.src = '/clock/clock_' + String(i).padStart(2, '0') + '.png';
+      clockFrames.push(img);
+    }
+
+    // Update clock face based on current hour
+    function updateClock() {
+      const now = new Date();
+      const hour = now.getHours() + now.getMinutes() / 60;
+      // Frame 0 = 6:00 AM (sunrise), Frame 32 = 6:00 PM (sunset)
+      const frame = Math.floor(((hour - 6 + 24) % 24) / 24 * 64) % 64;
+      document.getElementById('mc-clock').src = '/clock/clock_' + String(frame).padStart(2, '0') + '.png';
+
+      // Time string
+      const h = now.getHours();
+      const m = String(now.getMinutes()).padStart(2, '0');
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+      document.getElementById('clock-time').textContent = h12 + ':' + m + ' ' + ampm;
+
+      // Time-of-day lighting
+      updateTODLighting(hour);
+    }
+
+    function updateTODLighting(hour) {
+      if (!settings.night) return;
+      // Don't override forced day/night cheats
+      if (settings.forceday || settings.forcenight) return;
+      const overlay = document.getElementById('night-overlay');
+      overlay.classList.add('on');
+
+      // 6AM-7AM: dawn transition, 7AM-6PM: day, 6PM-7PM: dusk, 7PM-6AM: night
+      let bg;
+      if (hour >= 7 && hour < 18) {
+        // Daytime — no overlay
+        bg = 'rgba(0,0,0,0)';
+      } else if (hour >= 18 && hour < 19) {
+        // Dusk — orange tint fading to dark
+        const t = hour - 18; // 0-1
+        const r = Math.floor(40 * (1 - t));
+        const a = 0.1 + t * 0.35;
+        bg = 'rgba(' + r + ',10,40,' + a.toFixed(2) + ')';
+      } else if (hour >= 6 && hour < 7) {
+        // Dawn — dark fading to light
+        const t = hour - 6; // 0-1
+        const r = Math.floor(40 * (1 - t));
+        const a = 0.45 * (1 - t);
+        bg = 'rgba(' + r + ',10,40,' + a.toFixed(2) + ')';
+      } else {
+        // Night
+        bg = 'rgba(10,10,40,0.45)';
+      }
+      overlay.style.background = bg;
+    }
+
+    // Fetch weather for map center
+    async function fetchWeather() {
+      try {
+        const c = map.getCenter();
+        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + c.lat.toFixed(4) + '&longitude=' + c.lng.toFixed(4) + '&current=temperature_2m,weather_code,wind_speed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph');
+        const data = await res.json();
+        if (!data.current) return;
+        currentWeather = data.current;
+        const code = data.current.weather_code;
+        const cond = WMO_CONDITIONS[code] || { text: 'Unknown', icon: '🌡️', rain: false, snow: false };
+        const temp = Math.round(data.current.temperature_2m);
+        document.getElementById('weather-icon').textContent = cond.icon + ' ';
+        document.getElementById('weather-text').textContent = temp + '°F ' + cond.text;
+
+        // Start/stop weather particles (but don't override force cheats)
+        if (!settings.forcerain && !settings.forcesnow) {
+          if (cond.rain || cond.snow) startWeatherParticles(cond.snow ? 'snow' : 'rain');
+          else stopWeatherParticles();
+        }
+      } catch(e) { console.warn('[weather] fetch error:', e); }
+    }
+
+    // Weather particles (rain or snow)
+    function startWeatherParticles(type) {
+      // Clear previous weather classes
+      document.body.classList.remove('gloom', 'snowy');
+      document.getElementById('gloom-overlay').classList.remove('on');
+      // Apply weather atmosphere
+      if (type === 'rain') {
+        document.getElementById('gloom-overlay').classList.add('on');
+        document.body.classList.add('gloom');
+      } else if (type === 'snow') {
+        document.getElementById('gloom-overlay').classList.add('on');
+        document.body.classList.add('snowy');
+      }
+      const canvas = document.getElementById('weather-canvas');
+      canvas.classList.add('on');
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      if (weatherAnimFrame) { cancelAnimationFrame(weatherAnimFrame); weatherAnimFrame = null; }
+
+      weatherParticles = [];
+      const count = type === 'rain' ? 600 : 150;
+      for (let i = 0; i < count; i++) {
+        weatherParticles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          speed: type === 'rain' ? 10 + Math.random() * 10 : 0.8 + Math.random() * 1.2,
+          size: type === 'rain' ? 3 : (Math.random() > 0.5 ? 4 : 3),
+          drift: type === 'snow' ? (Math.random() - 0.5) * 0.8 : 0,
+          alpha: type === 'rain' ? 0.6 + Math.random() * 0.3 : 0.5 + Math.random() * 0.4,
+          type,
+        });
+      }
+
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (const p of weatherParticles) {
+          const px = Math.floor(p.x);
+          const py = Math.floor(p.y);
+          if (p.type === 'rain') {
+            // Minecraft rain: thick bright blue diagonal streaks
+            ctx.fillStyle = 'rgba(100,150,255,' + p.alpha.toFixed(2) + ')';
+            for (let s = 0; s < 8; s++) {
+              ctx.fillRect(px - s * 2, py + s * 4, 3, 4);
+            }
+          } else {
+            // Minecraft snow: chunky white pixel squares that drift
+            ctx.fillStyle = 'rgba(240,240,255,' + p.alpha.toFixed(2) + ')';
+            ctx.fillRect(px, py, p.size, p.size);
+          }
+          p.y += p.speed;
+          p.x += p.type === 'snow' ? p.drift + Math.sin(py * 0.02) * 0.5 : -4;
+          if (p.y > canvas.height) { p.y = -30; p.x = Math.random() * canvas.width; }
+          if (p.x < -20) p.x = canvas.width + 10;
+        }
+        weatherAnimFrame = requestAnimationFrame(animate);
+      }
+      animate();
+    }
+
+    function stopWeatherParticles() {
+      document.getElementById('weather-canvas').classList.remove('on');
+      document.getElementById('gloom-overlay').classList.remove('on');
+      document.body.classList.remove('gloom', 'snowy');
+      if (weatherAnimFrame) { cancelAnimationFrame(weatherAnimFrame); weatherAnimFrame = null; }
+      weatherParticles = [];
+    }
+
+    // Handle window resize for weather canvas
+    window.addEventListener('resize', () => {
+      const c = document.getElementById('weather-canvas');
+      if (c.classList.contains('on')) { c.width = window.innerWidth; c.height = window.innerHeight; }
+    });
+
+    // Initialize clock + weather
+    updateClock();
+    setInterval(updateClock, 30000); // update clock every 30s
+    fetchWeather();
+    setInterval(fetchWeather, 300000); // refresh weather every 5 min
+    map.on('moveend', () => { clearTimeout(window._weatherDebounce); window._weatherDebounce = setTimeout(fetchWeather, 5000); });
+  </script>
+</body>
+</html>

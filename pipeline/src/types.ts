@@ -196,34 +196,6 @@ export interface DebugOutput {
 }
 
 // ============================================
-// AI interfaces (optional, Phase 3)
-// ============================================
-
-export interface AIClassifier {
-  classify(
-    imageData: ImageData,
-    existingMap: SemanticMap,
-  ): Promise<SemanticMap>;
-  readonly modelId: string;
-}
-
-export interface AIStyleAdvisor {
-  suggestPalette(
-    region: BoundingBox,
-    semanticMap: SemanticMap,
-  ): Promise<PaletteOverride[]>;
-  readonly modelId: string;
-}
-
-export interface PaletteOverride {
-  semanticClass: SemanticClass;
-  originalBlock: string;
-  suggestedBlock: string;
-  reason: string;
-  confidence: number;
-}
-
-// ============================================
 // OSM feature types (for vector ingestion)
 // ============================================
 

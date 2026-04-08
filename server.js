@@ -27,7 +27,7 @@ app.get('/tiles/:z/:x/:y.png', async (req, res) => {
   // Check cache
   if (tileCache.has(key)) {
     res.set('Content-Type', 'image/png');
-    res.set('Cache-Control', 'public, max-age=86400');
+    res.set('Cache-Control', 'no-store');
     return res.send(tileCache.get(key));
   }
 
@@ -38,7 +38,6 @@ app.get('/tiles/:z/:x/:y.png', async (req, res) => {
     const elapsed = Date.now() - startTime;
     console.log(`  -> ${key} rendered in ${elapsed}ms`);
 
-    // Cache it
     // Keep cache from growing unbounded
     if (tileCache.size > 5000) {
       const firstKey = tileCache.keys().next().value;
@@ -47,7 +46,7 @@ app.get('/tiles/:z/:x/:y.png', async (req, res) => {
     tileCache.set(key, png);
 
     res.set('Content-Type', 'image/png');
-    res.set('Cache-Control', 'public, max-age=86400');
+    res.set('Cache-Control', 'no-store');
     res.send(png);
   } catch (err) {
     console.error(`Error rendering tile ${key}:`, err);

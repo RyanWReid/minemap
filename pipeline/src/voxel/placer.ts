@@ -166,6 +166,74 @@ export function placeBlocks(
     setWorldBlock(world, x, canopyBase + 3, z - 1, leafBlock);
   }
 
+  // ============================================
+  // Visual enrichment passes
+  // ============================================
+
+  // 2. Sidewalks — thin light-gray border along roads adjacent to non-road
+  let sidewalkCount = 0;
+  for (let z = 1; z < depth - 1; z++) {
+    for (let x = 1; x < width - 1; x++) {
+      const cls = getClass(semanticMap, x, z);
+      if (cls === SemanticClass.ROAD || cls === SemanticClass.WATER || cls === SemanticClass.BUILDING) continue;
+
+      // Check if adjacent to road
+      const adjRoad = (
+        getClass(semanticMap, x - 1, z) === SemanticClass.ROAD ||
+        getClass(semanticMap, x + 1, z) === SemanticClass.ROAD ||
+        getClass(semanticMap, x, z - 1) === SemanticClass.ROAD ||
+        getClass(semanticMap, x, z + 1) === SemanticClass.ROAD
+      );
+      if (!adjRoad) continue;
+
+      const hx = Math.floor(x * hScaleX);
+      const hz = Math.floor(z * hScaleY);
+      const surfaceY = heightMap.quantized[hz * heightMap.width + hx] || seaLevel;
+      setWorldBlock(world, x, surfaceY, z, 'minecraft:smooth_stone');
+      sidewalkCount++;
+    }
+  }
+  console.log(`  Sidewalks: ${sidewalkCount}`);
+
+  // 4. Water detail — darker shoreline border, lily pads on small ponds
+  let waterDetailCount = 0;
+  for (let z = 1; z < depth - 1; z++) {
+    for (let x = 1; x < width - 1; x++) {
+      if (getClass(semanticMap, x, z) !== SemanticClass.WATER) continue;
+
+      const hx = Math.floor(x * hScaleX);
+      const hz = Math.floor(z * hScaleY);
+      const surfaceY = heightMap.quantized[hz * heightMap.width + hx] || seaLevel;
+      const waterY = Math.max(surfaceY, seaLevel);
+
+      // Shoreline detection — water cell adjacent to land
+      const adjLand = (
+        getClass(semanticMap, x - 1, z) !== SemanticClass.WATER ||
+        getClass(semanticMap, x + 1, z) !== SemanticClass.WATER ||
+        getClass(semanticMap, x, z - 1) !== SemanticClass.WATER ||
+        getClass(semanticMap, x, z + 1) !== SemanticClass.WATER
+      );
+
+      if (adjLand) {
+        // Darker water at shore
+        setWorldBlock(world, x, waterY, z, 'minecraft:blue_ice' as any);
+        waterDetailCount++;
+      }
+
+      // Lily pads on calm water (not shoreline, random scatter)
+      if (!adjLand) {
+        const hash = ((x * 48271) ^ (z * 93461)) & 0xFFFF;
+        if (hash < 200) {
+          setWorldBlock(world, x, waterY + 1, z, 'minecraft:lily_pad');
+          waterDetailCount++;
+        }
+      }
+    }
+  }
+  console.log(`  Water details: ${waterDetailCount}`);
+
+  // 5. Beach/shore gradient — disabled (was adding unwanted sand around rivers/lakes)
+
   console.log(`  World has ${world.chunks.size} chunks`);
 
   return {

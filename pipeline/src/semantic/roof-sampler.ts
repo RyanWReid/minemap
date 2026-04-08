@@ -106,8 +106,8 @@ export interface SurfaceColorMap {
 }
 
 /**
- * Sample satellite imagery and create per-cell block overrides
- * for buildings, roads, and ground features.
+ * Find connected building components via flood-fill, then assign
+ * ONE average satellite color per building for a clean block look.
  */
 export function sampleSurfaceColors(
   satellite: SatelliteData,
@@ -119,47 +119,78 @@ export function sampleSurfaceColors(
   const scaleX = satellite.width / width;
   const scaleY = satellite.height / height;
 
-  let buildingSamples = 0;
-  let roadSamples = 0;
+  // Step 1: Label connected building components
+  const labels = new Int32Array(width * height); // 0 = unlabeled
+  let nextLabel = 1;
+  const buildingCells: Map<number, number[]> = new Map(); // label -> [idx, idx, ...]
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const cls = semanticMap.data[y * width + x];
+      const idx = y * width + x;
+      if (semanticMap.data[idx] !== SemanticClass.BUILDING || labels[idx] !== 0) continue;
 
-      // Sample satellite pixel (average a small area for stability)
-      const sx = Math.floor(x * scaleX);
-      const sy = Math.floor(y * scaleY);
+      // Flood-fill this building
+      const label = nextLabel++;
+      const cells: number[] = [];
+      const stack = [idx];
+      labels[idx] = label;
 
-      // Average a 3x3 area in satellite space
-      let rSum = 0, gSum = 0, bSum = 0, count = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const px = Math.min(Math.max(0, sx + dx), satellite.width - 1);
-          const py = Math.min(Math.max(0, sy + dy), satellite.height - 1);
-          const si = (py * satellite.width + px) * 4;
-          rSum += satellite.pixels[si];
-          gSum += satellite.pixels[si + 1];
-          bSum += satellite.pixels[si + 2];
-          count++;
+      while (stack.length > 0) {
+        const ci = stack.pop()!;
+        cells.push(ci);
+        const cx = ci % width;
+        const cy = (ci - cx) / width;
+
+        // 4-connected neighbors
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          const ni = ny * width + nx;
+          if (labels[ni] !== 0 || semanticMap.data[ni] !== SemanticClass.BUILDING) continue;
+          labels[ni] = label;
+          stack.push(ni);
         }
       }
 
-      const r = Math.floor(rSum / count);
-      const g = Math.floor(gSum / count);
-      const b = Math.floor(bSum / count);
-      const idx = y * width + x;
-
-      // Only sample satellite colors for buildings — their roofs have stable,
-      // meaningful colors. Roads and ground should keep Minecraft defaults
-      // because satellite can show seasonal variation (winter brown, shadows, etc.)
-      if (cls === SemanticClass.BUILDING) {
-        overrides[idx] = findNearestBlock(r, g, b, ROOF_PALETTE);
-        buildingSamples++;
-      }
+      buildingCells.set(label, cells);
     }
   }
 
-  console.log(`  Sampled ${buildingSamples} building + ${roadSamples} road cells from satellite`);
+  // Step 2: For each building, compute average satellite color and assign ONE block
+  // Skip huge components (>3000 cells) — they're usually compound boundaries, not real roofs
+  const MAX_BUILDING_CELLS = 3000;
+  let buildingCount = 0;
+  for (const [, cells] of buildingCells) {
+    if (cells.length > MAX_BUILDING_CELLS) continue; // too big, use biome default
+    let rSum = 0, gSum = 0, bSum = 0, count = 0;
+
+    for (const idx of cells) {
+      const x = idx % width;
+      const y = (idx - x) / width;
+      const sx = Math.floor(x * scaleX);
+      const sy = Math.floor(y * scaleY);
+      const si = (Math.min(sy, satellite.height - 1) * satellite.width + Math.min(sx, satellite.width - 1)) * 4;
+      rSum += satellite.pixels[si];
+      gSum += satellite.pixels[si + 1];
+      bSum += satellite.pixels[si + 2];
+      count++;
+    }
+
+    const block = findNearestBlock(
+      Math.floor(rSum / count),
+      Math.floor(gSum / count),
+      Math.floor(bSum / count),
+      ROOF_PALETTE,
+    );
+
+    // Apply single color to every cell of this building
+    for (const idx of cells) {
+      overrides[idx] = block;
+    }
+    buildingCount++;
+  }
+
+  console.log(`  Roof sampler: ${buildingCount} buildings, ${nextLabel - 1} components`);
 
   return { width, height, blockOverrides: overrides };
 }

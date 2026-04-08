@@ -5,6 +5,12 @@ import { resolve, join } from 'path';
 import Pbf from 'pbf';
 import { VectorTile } from '@mapbox/vector-tile';
 import { PMTiles } from 'pmtiles';
+import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
+import cookieParser from 'cookie-parser';
+import crypto from 'crypto';
+import { createServer } from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
 import { SemanticClass } from './types.js';
 import { tileToBBox, tileToLatLng, latlngToTile } from './util/coord.js';
 import { createSemanticMap, fillPolygon, drawLine } from './semantic/class-map.js';
@@ -12,6 +18,7 @@ import { BLOCKS } from './palette/block-types.js';
 import { selectBiome, BIOME_PALETTES, pickBuildingStyle } from './palette/biome-rules.js';
 import { quantizeTerrain } from './terrain/quantizer.js';
 import { placeBlocks } from './voxel/placer.js';
+import { sampleSurfaceColors } from './semantic/roof-sampler.js';
 import { renderTopDown } from './preview/top-down.js';
 import type { BoundingBox, HeightMap } from './types.js';
 
@@ -21,20 +28,222 @@ const CACHE_DIR = resolve('tile-cache');
 mkdirSync(CACHE_DIR, { recursive: true });
 
 // ============================================
+// Database setup
+// ============================================
+
+const DB_PATH = resolve('minecraft-map.db');
+const db = new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS players (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_name TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    xp INTEGER DEFAULT 0,
+    level INTEGER DEFAULT 1,
+    friend_code TEXT UNIQUE,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS waypoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    name TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    icon TEXT DEFAULT 'default',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS achievements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    achievement_key TEXT NOT NULL,
+    unlocked_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(player_id, achievement_key)
+  );
+  CREATE TABLE IF NOT EXISTS friendships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL REFERENCES players(id),
+    friend_id INTEGER NOT NULL REFERENCES players(id),
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(player_id, friend_id)
+  );
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_id INTEGER NOT NULL REFERENCES players(id),
+    to_id INTEGER,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
+// Add friend_code column if not exists
+try { db.exec(`ALTER TABLE players ADD COLUMN friend_code TEXT UNIQUE`); } catch {}
+
+// Generate friend codes for existing players without one
+function generateFriendCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1 to avoid confusion
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+const playersWithoutCode = db.prepare('SELECT id FROM players WHERE friend_code IS NULL').all() as any[];
+for (const p of playersWithoutCode) {
+  let code = generateFriendCode();
+  while (db.prepare('SELECT id FROM players WHERE friend_code = ?').get(code)) code = generateFriendCode();
+  db.prepare('UPDATE players SET friend_code = ? WHERE id = ?').run(code, p.id);
+}
+
+// Session store (in-memory, simple token-based)
+const sessions = new Map<string, { playerId: number; playerName: string }>();
+
+function createSession(playerId: number, playerName: string): string {
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, { playerId, playerName });
+  return token;
+}
+
+function getSession(token: string | undefined) {
+  if (!token) return null;
+  return sessions.get(token) || null;
+}
+
+app.use(express.json());
+app.use(cookieParser());
+
+// ============================================
+// Auth API
+// ============================================
+
+app.post('/api/register', (req, res) => {
+  const { playerName, password } = req.body;
+  if (!playerName || !password) return res.status(400).json({ error: 'Player name and password required' });
+  if (playerName.length < 3 || playerName.length > 16) return res.status(400).json({ error: 'Name must be 3-16 characters' });
+  if (!/^[a-zA-Z0-9_]+$/.test(playerName)) return res.status(400).json({ error: 'Name can only contain letters, numbers, and underscores' });
+  if (password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters' });
+
+  const existing = db.prepare('SELECT id FROM players WHERE player_name = ?').get(playerName);
+  if (existing) return res.status(409).json({ error: 'Player name already taken' });
+
+  const hash = bcrypt.hashSync(password, 10);
+  let friendCode = generateFriendCode();
+  while (db.prepare('SELECT id FROM players WHERE friend_code = ?').get(friendCode)) friendCode = generateFriendCode();
+  const result = db.prepare('INSERT INTO players (player_name, password_hash, friend_code) VALUES (?, ?, ?)').run(playerName, hash, friendCode);
+  const token = createSession(result.lastInsertRowid as number, playerName);
+  res.cookie('mc_session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
+  res.json({ ok: true, player: { id: result.lastInsertRowid, playerName, xp: 0, level: 1, friendCode } });
+});
+
+app.post('/api/login', (req, res) => {
+  const { playerName, password } = req.body;
+  if (!playerName || !password) return res.status(400).json({ error: 'Player name and password required' });
+
+  const player = db.prepare('SELECT id, player_name, password_hash, xp, level FROM players WHERE player_name = ?').get(playerName) as any;
+  if (!player || !bcrypt.compareSync(password, player.password_hash)) {
+    return res.status(401).json({ error: 'Invalid player name or password' });
+  }
+
+  const token = createSession(player.id, player.player_name);
+  res.cookie('mc_session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
+  res.json({ ok: true, player: { id: player.id, playerName: player.player_name, xp: player.xp, level: player.level } });
+});
+
+app.post('/api/logout', (req, res) => {
+  const token = req.cookies?.mc_session;
+  if (token) sessions.delete(token);
+  res.clearCookie('mc_session');
+  res.json({ ok: true });
+});
+
+app.get('/api/me', (req, res) => {
+  const session = getSession(req.cookies?.mc_session);
+  if (!session) return res.json({ player: null });
+
+  const player = db.prepare('SELECT id, player_name, xp, level, friend_code, created_at FROM players WHERE id = ?').get(session.playerId) as any;
+  if (!player) return res.json({ player: null });
+
+  const achievements = db.prepare('SELECT achievement_key, unlocked_at FROM achievements WHERE player_id = ?').all(session.playerId);
+  const waypoints = db.prepare('SELECT id, name, lat, lng, icon, created_at FROM waypoints WHERE player_id = ? ORDER BY created_at DESC').all(session.playerId);
+
+  res.json({
+    player: {
+      id: player.id,
+      playerName: player.player_name,
+      xp: player.xp,
+      level: player.level,
+      friendCode: player.friend_code,
+      createdAt: player.created_at,
+      achievements,
+      waypoints,
+    },
+  });
+});
+
+app.post('/api/waypoints', (req, res) => {
+  const session = getSession(req.cookies?.mc_session);
+  if (!session) return res.status(401).json({ error: 'Not logged in' });
+
+  const { name, lat, lng, icon } = req.body;
+  if (!name || lat == null || lng == null) return res.status(400).json({ error: 'name, lat, lng required' });
+
+  const result = db.prepare('INSERT INTO waypoints (player_id, name, lat, lng, icon) VALUES (?, ?, ?, ?, ?)').run(session.playerId, name, lat, lng, icon || 'default');
+  res.json({ ok: true, id: result.lastInsertRowid });
+});
+
+app.delete('/api/waypoints/:id', (req, res) => {
+  const session = getSession(req.cookies?.mc_session);
+  if (!session) return res.status(401).json({ error: 'Not logged in' });
+  db.prepare('DELETE FROM waypoints WHERE id = ? AND player_id = ?').run(req.params.id, session.playerId);
+  res.json({ ok: true });
+});
+
+app.post('/api/achievement', (req, res) => {
+  const session = getSession(req.cookies?.mc_session);
+  if (!session) return res.status(401).json({ error: 'Not logged in' });
+
+  const { key } = req.body;
+  if (!key) return res.status(400).json({ error: 'achievement key required' });
+
+  try {
+    db.prepare('INSERT OR IGNORE INTO achievements (player_id, achievement_key) VALUES (?, ?)').run(session.playerId, key);
+    // Award XP for new achievement
+    db.prepare('UPDATE players SET xp = xp + 100 WHERE id = ?').run(session.playerId);
+    const player = db.prepare('SELECT xp FROM players WHERE id = ?').get(session.playerId) as any;
+    // Level up every 500 XP
+    const newLevel = Math.floor(player.xp / 500) + 1;
+    db.prepare('UPDATE players SET level = ? WHERE id = ?').run(newLevel, session.playerId);
+    res.json({ ok: true, xp: player.xp, level: newLevel });
+  } catch {
+    res.json({ ok: true }); // Already unlocked
+  }
+});
+
+// Serve static assets (sounds, etc.)
+app.use('/sounds', express.static(resolve('public/sounds')));
+
+// ============================================
 // Direct single-tile fetchers (no bbox routing)
 // ============================================
 
 async function fetchOneVectorTile(z: number, x: number, y: number): Promise<VectorTile | null> {
-  const PbfClass = (Pbf as any).default || Pbf;
-  const url = `https://tiles.versatiles.org/tiles/osm/${z}/${x}/${y}.pbf`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) return null;
-  const buf = await res.arrayBuffer();
-  if (buf.byteLength < 20) return null;
-  return new VectorTile(new PbfClass(new Uint8Array(buf)));
+  try {
+    const PbfClass = (Pbf as any).default || Pbf;
+    const url = `https://tiles.versatiles.org/tiles/osm/${z}/${x}/${y}.pbf`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength < 20) return null;
+    return new VectorTile(new PbfClass(new Uint8Array(buf)));
+  } catch (e) {
+    console.warn(`  VersaTiles fetch failed: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 async function fetchOneElevationTile(z: number, x: number, y: number): Promise<{data: Uint8ClampedArray, width: number} | null> {
+  try {
   const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
   const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
   if (!res.ok) return null;
@@ -45,6 +254,10 @@ async function fetchOneElevationTile(z: number, x: number, y: number): Promise<{
   ctx.drawImage(img, 0, 0);
   const imgData = ctx.getImageData(0, 0, img.width, img.height);
   return { data: imgData.data, width: img.width };
+  } catch (e) {
+    console.warn(`  Elevation fetch failed: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 function decodeTerrarium(data: Uint8ClampedArray, x: number, y: number, w: number): number {
@@ -184,6 +397,7 @@ interface OverpassResult {
   buildings: OverpassElement[];
   roads: OverpassElement[];
   trees: Array<{lat:number,lon:number}>;
+  highwayCount: number;
 }
 
 interface OverpassElement {
@@ -204,7 +418,11 @@ async function fetchOverpass(south: number, west: number, north: number, east: n
   if (existsSync(cachePath)) {
     try {
       const cached = JSON.parse(readFileSync(cachePath, 'utf8'));
-      console.log(`  Overpass: cached (${cached.buildings.length} buildings, ${cached.roads.length} roads)`);
+      // Backfill highwayCount for old cache entries
+      if (cached.highwayCount === undefined) {
+        cached.highwayCount = cached.roads?.filter((e: any) => e.tags?.highway)?.length ?? 0;
+      }
+      console.log(`  Overpass: cached (${cached.buildings.length} buildings, ${cached.roads.length} roads, ${cached.highwayCount} highways)`);
       return cached;
     } catch {}
   }
@@ -222,7 +440,7 @@ async function fetchOverpass(south: number, west: number, north: number, east: n
     const fetchJSON = async (url: string) => {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+          const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
           if (res.status === 429 || res.status === 504) {
             await new Promise(r => setTimeout(r, 2000));
             continue;
@@ -236,11 +454,14 @@ async function fetchOverpass(south: number, west: number, north: number, east: n
       return null;
     };
 
-    const [d1, d2] = await Promise.all([fetchJSON(url1), fetchJSON(url2)]);
+    // Sequential to avoid Overpass rate limits (429/504)
+    const d1 = await fetchJSON(url1);
+    const d2 = await fetchJSON(url2);
 
     const buildings: OverpassElement[] = [];
     const roads: OverpassElement[] = [];
     const trees: Array<{lat:number,lon:number}> = [];
+    let highwayCount = 0;
 
     const allElements: any[] = [];
     if (d1) allElements.push(...(d1.elements || []));
@@ -256,17 +477,20 @@ async function fetchOverpass(south: number, west: number, north: number, east: n
       if (e.tags.building) {
         buildings.push(e);
       } else {
+        if (e.tags.highway) highwayCount++;
         roads.push(e);
       }
     }
 
-    const result = { buildings, roads, trees };
-    // Save to disk cache
-    try { writeFileSync(cachePath, JSON.stringify(result)); } catch {}
+    const result = { buildings, roads, trees, highwayCount };
+    // Only cache if we got meaningful data (don't poison cache with empty results)
+    if (buildings.length > 0 || highwayCount > 0) {
+      try { writeFileSync(cachePath, JSON.stringify(result)); } catch {}
+    }
     return result;
   } catch {
     console.log('  Overpass failed, using VersaTiles only');
-    return { buildings: [], roads: [], trees: [] };
+    return { buildings: [], roads: [], trees: [], highwayCount: 0 };
   }
 }
 
@@ -294,22 +518,151 @@ const HIGHWAY_WIDTHS: Record<string, number> = {
   pedestrian:15, footway:10, path:8, cycleway:10, track:12, steps:8,
 };
 
+// ============================================
+// Satellite ground refinement
+// ============================================
+
+/** Fetch a single Esri satellite tile and return its RGBA pixels */
+async function fetchSatelliteTilePixels(z: number, x: number, y: number): Promise<{ data: Uint8ClampedArray; width: number; height: number } | null> {
+  try {
+    const url = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    const img = await loadImage(buf);
+    const canvas = createCanvas(img.width, img.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    return ctx.getImageData(0, 0, img.width, img.height);
+  } catch { return null; }
+}
+
+/**
+ * Conservative satellite ground refinement.
+ * Only reclassifies pixels that are VERY clearly not grass.
+ * Biased heavily toward keeping grass — only overrides for obvious water,
+ * large bare dirt patches, and clearly non-green terrain.
+ */
+function refineGroundFromSatellite(
+  semMap: { data: Uint8Array; confidence: Float32Array; width: number; height: number },
+  satPixels: Uint8ClampedArray,
+  satWidth: number,
+  satHeight: number,
+): number {
+  const scaleX = satWidth / semMap.width;
+  const scaleY = satHeight / semMap.height;
+  let refined = 0;
+
+  for (let my = 0; my < semMap.height; my++) {
+    for (let mx = 0; mx < semMap.width; mx++) {
+      const idx = my * semMap.width + mx;
+      // Only refine low-confidence GRASS cells (the default fill)
+      if (semMap.data[idx] !== SemanticClass.GRASS || semMap.confidence[idx] > 0.15) continue;
+
+      // Sample satellite pixel (average a 5x5 area for stability — reduces noise from roofs/shadows)
+      const cx = Math.floor(mx * scaleX);
+      const cy = Math.floor(my * scaleY);
+      let rSum = 0, gSum = 0, bSum = 0, count = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const sx = Math.min(Math.max(cx + dx, 0), satWidth - 1);
+          const sy = Math.min(Math.max(cy + dy, 0), satHeight - 1);
+          const si = (sy * satWidth + sx) * 4;
+          rSum += satPixels[si]; gSum += satPixels[si + 1]; bSum += satPixels[si + 2];
+          count++;
+        }
+      }
+      const r = rSum / count, g = gSum / count, b = bSum / count;
+
+      // KEEP AS GRASS if there's any green signal at all (very conservative)
+      if (g > r * 0.95 && g > 50) continue;
+      // Keep as grass if it's ambiguous / mid-tone
+      if (r > 80 && r < 200 && g > 70 && g < 180 && b > 60 && b < 160) continue;
+
+      // Only classify WATER if blue is strongly dominant
+      if (b > r * 1.5 && b > g * 1.3 && b > 50) {
+        // Pool vs water: pools are brighter
+        const cls = (r + g + b > 350) ? SemanticClass.POOL : SemanticClass.WATER;
+        semMap.data[idx] = cls;
+        semMap.confidence[idx] = 0.2;
+        refined++;
+        continue;
+      }
+
+      // Only classify BARE GROUND if very clearly brown/tan with NO green
+      if (r > 140 && r > g * 1.3 && r > b * 1.5 && g < 130 && b < 100) {
+        semMap.data[idx] = SemanticClass.BARE_GROUND;
+        semMap.confidence[idx] = 0.2;
+        refined++;
+        continue;
+      }
+
+      // Dense forest: very dark with green dominance
+      if (g > r && g > b && r < 50 && g < 70 && b < 45) {
+        semMap.data[idx] = SemanticClass.FOREST;
+        semMap.confidence[idx] = 0.2;
+        refined++;
+      }
+    }
+  }
+  return refined;
+}
+
 const parentCache = new Map<string, Buffer>();
 
-async function renderParentTile(sz: number, sx: number, sy: number): Promise<Buffer> {
+interface RenderResult {
+  buffer: Buffer;
+  complete: boolean; // true if all critical data sources succeeded
+}
+
+async function renderParentTile(sz: number, sx: number, sy: number): Promise<RenderResult | null> {
   const parentKey = `parent_${sz}_${sx}_${sy}`;
-  if (parentCache.has(parentKey)) return parentCache.get(parentKey)!;
 
   const bbox = tileToBBox(sz, sx, sy);
   const extent = 4096;
   const renderSize = 1024;
 
-  // Fetch VersaTiles (base layers) + elevation + Overpass (complete buildings/roads) in parallel
-  const [vt, elevTile, overpass] = await Promise.all([
-    fetchOneVectorTile(sz, sx, sy),
-    fetchOneElevationTile(sz, sx, sy),
-    fetchOverpass(bbox.south, bbox.west, bbox.north, bbox.east),
-  ]);
+  // Fetch all data sources in parallel
+  async function fetchAllSources() {
+    return Promise.all([
+      fetchOneVectorTile(sz, sx, sy),
+      fetchOneElevationTile(sz, sx, sy),
+      fetchOverpass(bbox.south, bbox.west, bbox.north, bbox.east),
+      fetchSatelliteTilePixels(sz, sx, sy),
+    ]);
+  }
+
+  let [vt, elevTile, overpass, satTile] = await fetchAllSources();
+
+  // Check completeness — actual highway roads are critical (not just any non-building element)
+  let hasOverpassRoads = (overpass.highwayCount ?? overpass.roads.length) > 0;
+  let hasElevation = elevTile !== null;
+
+  // Retry once if missing critical data
+  if (!hasOverpassRoads || !hasElevation) {
+    const missing = [];
+    if (!hasOverpassRoads) missing.push(`overpass highways (got ${overpass.roads.length} non-building elements but 0 highways)`);
+    if (!hasElevation) missing.push('elevation');
+    console.log(`  Incomplete data (missing: ${missing.join(', ')}), retrying in 3s...`);
+    await new Promise(r => setTimeout(r, 3000));
+    // Only re-fetch what's missing
+    if (!hasOverpassRoads) {
+      overpass = await fetchOverpass(bbox.south, bbox.west, bbox.north, bbox.east);
+      hasOverpassRoads = (overpass.highwayCount ?? overpass.roads.length) > 0;
+    }
+    if (!hasElevation) {
+      elevTile = await fetchOneElevationTile(sz, sx, sy);
+      hasElevation = elevTile !== null;
+    }
+  }
+
+  // Still no Overpass roads after retry — refuse to render
+  if (!hasOverpassRoads) {
+    console.log(`  SKIPPED: No Overpass highway data after retry — returning 503`);
+    return null;
+  }
+
+  const complete = hasOverpassRoads && hasElevation;
 
   console.log(`  Overpass: ${overpass.buildings.length} buildings, ${overpass.roads.length} roads`);
 
@@ -416,7 +769,7 @@ async function renderParentTile(sz: number, sx: number, sy: number): Promise<Buf
     else if (t.leisure === 'golf_course') { cls = SemanticClass.PARK; priority = 0.45; }
     // Amenities
     else if (t.amenity === 'parking') { cls = SemanticClass.PARKING; priority = 0.6; }
-    else if (t.amenity === 'school') { cls = SemanticClass.SCHOOL; priority = 0.5; }
+    else if (t.amenity === 'school') { cls = SemanticClass.SCHOOL; priority = 0.2; }
     // Railway
     else if (t.railway) { cls = SemanticClass.RAILWAY; width = 12; priority = 0.75; }
     // Green dashed on OSM = bridleway/path/track = dirt paths
@@ -524,6 +877,12 @@ async function renderParentTile(sz: number, sx: number, sy: number): Promise<Buf
     }
   }
 
+  // Refine ground cover using satellite imagery
+  if (satTile) {
+    const refined = refineGroundFromSatellite(semMap, satTile.data, satTile.width, satTile.height);
+    console.log(`  Satellite ground refinement: ${refined} cells reclassified`);
+  }
+
   // Downsample: 4096 -> 1024
   const scaleDown = extent / renderSize;
   const newData = new Uint8Array(renderSize * renderSize);
@@ -546,16 +905,14 @@ async function renderParentTile(sz: number, sx: number, sy: number): Promise<Buf
       }
     }
   }
-  let minE = Infinity, maxE = -Infinity;
-  for (const e of elevation) { if (e < minE) minE = e; if (e > maxE) maxE = e; }
-  const clampedMin = Math.max(minE, -10);
-  const range = maxE - clampedMin || 1;
-  const blockRange = Math.min(60, Math.max(10, Math.ceil(range)));
+  // Fixed global elevation scaling — prevents seams between adjacent tiles.
+  // All tiles use the same mapping: 0m real = Y64 (sea level), 1m = 0.5 blocks.
   const seaLevel = 64;
-  const baseY = Math.max(5, seaLevel - Math.floor(blockRange * 0.3));
+  const metersPerBlock = 2; // 1 block per 2 meters of real elevation
   const quantized = new Uint8Array(renderSize * renderSize);
   for (let i = 0; i < elevation.length; i++) {
-    quantized[i] = Math.min(255, Math.max(1, Math.floor(baseY + (Math.max(clampedMin, elevation[i]) - clampedMin) / range * blockRange)));
+    const y = seaLevel + Math.round(elevation[i] / metersPerBlock);
+    quantized[i] = Math.min(255, Math.max(1, y));
   }
 
   const heightMap: HeightMap = {
@@ -565,17 +922,33 @@ async function renderParentTile(sz: number, sx: number, sy: number): Promise<Buf
 
   // Use the EXACT pipeline code that produced the approved output
   const terrainResult = quantizeTerrain(heightMap, { seaLevel });
-  const worldResult = placeBlocks(workingMap, terrainResult.data);
+
+  // Sample satellite colors for building roofs (makes white roofs white, not terracotta)
+  let surfaceColors = undefined;
+  if (satTile) {
+    const satData = {
+      pixels: satTile.data,
+      width: satTile.width,
+      height: satTile.height,
+      bounds: bbox,
+      tileZoom: sz,
+    };
+    surfaceColors = sampleSurfaceColors(satData, workingMap);
+  }
+
+  const worldResult = placeBlocks(workingMap, terrainResult.data, undefined, surfaceColors);
   const pipelineResult = renderTopDown(worldResult.data, '');
 
   const result = pipelineResult.buffer!;
-  parentCache.set(parentKey, result);
-  if (parentCache.size > 50) {
-    const first = parentCache.keys().next().value;
-    if (first) parentCache.delete(first);
+  if (complete) {
+    parentCache.set(parentKey, result);
+    if (parentCache.size > 50) {
+      const first = parentCache.keys().next().value;
+      if (first) parentCache.delete(first);
+    }
   }
 
-  return result;
+  return { buffer: result, complete };
 }
 
 // In-flight parent renders to avoid duplicate work
@@ -596,7 +969,9 @@ async function renderAndCacheParent(parentZ: number, parentX: number, parentY: n
 
   const promise = (async () => {
     const start = Date.now();
-    const parentPNG = await renderParentTile(parentZ, parentX, parentY);
+    const renderResult = await renderParentTile(parentZ, parentX, parentY);
+    if (!renderResult) return; // Incomplete data — don't generate tiles
+    const { buffer: parentPNG, complete } = renderResult;
     const parentImg = await loadImage(parentPNG);
     const parentW = parentImg.width;
 
@@ -611,19 +986,21 @@ async function renderAndCacheParent(parentZ: number, parentX: number, parentY: n
         const key = `16_${tileX}_${tileY}`;
         const diskPath = join(CACHE_DIR, `${key}.png`);
 
-        if (!existsSync(diskPath)) {
-          const canvas = createCanvas(256, 256);
-          const ctx = canvas.getContext('2d');
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(parentImg, sx * subSize, sy * subSize, subSize, subSize, 0, 0, 256, 256);
-          const buf = canvas.toBuffer('image/png');
+        const canvas = createCanvas(256, 256);
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(parentImg, sx * subSize, sy * subSize, subSize, subSize, 0, 0, 256, 256);
+        const buf = canvas.toBuffer('image/png');
+
+        // Only persist to disk if tile has complete data
+        if (complete) {
           writeFileSync(diskPath, buf);
-          memCache.set(key, buf);
         }
+        memCacheSet(key, buf);
       }
     }
 
-    console.log(`  Parent ${parentZ}/${parentX}/${parentY} -> 16 tiles in ${Date.now() - start}ms`);
+    console.log(`  Parent ${parentZ}/${parentX}/${parentY} -> 16 tiles in ${Date.now() - start}ms${complete ? '' : ' (INCOMPLETE - not cached)'}`);
   })();
 
   parentInFlight.set(parentKey, promise);
@@ -635,8 +1012,17 @@ async function renderAndCacheParent(parentZ: number, parentX: number, parentY: n
 // ============================================
 
 const memCache = new Map<string, Buffer>();
+const MEM_CACHE_MAX = 500;
+function memCacheSet(key: string, buf: Buffer) {
+  memCache.set(key, buf);
+  if (memCache.size > MEM_CACHE_MAX) {
+    const first = memCache.keys().next().value;
+    if (first) memCache.delete(first);
+  }
+}
 
 app.get('/tiles/:z/:x/:y.png', async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
   const z = parseInt(req.params.z);
   const x = parseInt(req.params.x);
   const y = parseInt(req.params.y);
@@ -647,22 +1033,22 @@ app.get('/tiles/:z/:x/:y.png', async (req, res) => {
 
   const key = `${z}_${x}_${y}`;
 
-  // Memory cache
+  // TEMP: all caching disabled for dev — always re-render
+  const diskPath = join(CACHE_DIR, `${key}.png`);
+  /*
   if (memCache.has(key)) {
     res.set('Content-Type', 'image/png');
-    res.set('Cache-Control', 'public, max-age=86400');
+    res.set('Cache-Control', 'no-cache, no-store');
     return res.send(memCache.get(key));
   }
-
-  // Disk cache
-  const diskPath = join(CACHE_DIR, `${key}.png`);
   if (existsSync(diskPath)) {
     const buf = readFileSync(diskPath);
-    memCache.set(key, buf);
+    memCacheSet(key, buf);
     res.set('Content-Type', 'image/png');
-    res.set('Cache-Control', 'public, max-age=86400');
+    res.set('Cache-Control', 'no-cache, no-store');
     return res.send(buf);
   }
+  */
 
   try {
     if (z === 16) {
@@ -671,25 +1057,36 @@ app.get('/tiles/:z/:x/:y.png', async (req, res) => {
       const parentY = Math.floor(y / 4);
       await renderAndCacheParent(14, parentX, parentY);
 
-      // Now it should be cached
+      // Now it should be cached (if render succeeded)
       if (existsSync(diskPath)) {
         const buf = readFileSync(diskPath);
-        memCache.set(key, buf);
+        memCacheSet(key, buf);
         res.set('Content-Type', 'image/png');
-        res.set('Cache-Control', 'public, max-age=86400');
+        res.set('Cache-Control', 'no-cache, no-store');
         return res.send(buf);
       }
+      // If not on disk, render was incomplete — return 503 so browser retries
+      if (memCache.has(key)) {
+        res.set('Content-Type', 'image/png');
+        res.set('Cache-Control', 'no-cache, no-store');
+        return res.send(memCache.get(key));
+      }
+      return res.status(503).set('Retry-After', '5').send('');
     }
 
     // Fallback: render directly for z14 or below
     const start = Date.now();
-    const png = await renderParentTile(z, x, y);
-    console.log(`  ${z}/${x}/${y} rendered in ${Date.now() - start}ms`);
+    const result = await renderParentTile(z, x, y);
+    if (!result) {
+      return res.status(503).set('Retry-After', '5').send('');
+    }
+    const { buffer: png, complete } = result;
+    console.log(`  ${z}/${x}/${y} rendered in ${Date.now() - start}ms${complete ? '' : ' (INCOMPLETE)'}`);
 
-    writeFileSync(diskPath, png);
-    memCache.set(key, png);
+    if (complete) writeFileSync(diskPath, png);
+    memCacheSet(key, png);
     res.set('Content-Type', 'image/png');
-    res.set('Cache-Control', 'public, max-age=86400');
+    res.set('Cache-Control', 'no-cache, no-store');
     res.send(png);
   } catch (err) {
     console.error(`Error ${z}/${x}/${y}:`, err);
@@ -697,298 +1094,494 @@ app.get('/tiles/:z/:x/:y.png', async (req, res) => {
   }
 });
 
-// Viewer
-app.get('/', (_req, res) => {
-  res.send(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Minecraft Map</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style>
-    @font-face {
-      font-family: 'Minecraft';
-      src: url('https://cdn.jsdelivr.net/gh/South-Paw/typeface-minecraft@master/fonts/minecraft.woff2') format('woff2');
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Minecraft', monospace; background: #1a1a1a; }
-    #map { width: 100vw; height: 100vh; }
-    .leaflet-tile { image-rendering: pixelated !important; }
+// ============================================
+// Map frame textures (8-slice pixel art)
+// ============================================
 
-    #controls {
-      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-      z-index: 1000; display: flex; gap: 0;
-    }
-    .ctrl-btn {
-      font-family: 'Minecraft', monospace; font-size: 12px;
-      padding: 8px 14px; border: 3px solid #555;
-      background: #6b6b6b; color: #aaa; cursor: pointer;
-      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
-    }
-    .ctrl-btn:not(:last-child) { border-right: none; }
-    .ctrl-btn.active {
-      background: #4a8c3f; color: #fff;
-      box-shadow: inset -2px -2px 0 #6ab35e, inset 2px 2px 0 #2d6324;
-    }
-    .ctrl-btn:hover:not(.active) { background: #888; }
+function generateFrameTextures() {
+  const cache: Record<string, Buffer> = {};
+  const T = 24; // frame thickness in pixels
+  const C = 36; // corner size in pixels
+  const px = 3;  // pixel scale
 
-    #search-container {
-      position: absolute; top: 56px; left: 50%; transform: translateX(-50%);
-      z-index: 1000; display: flex; gap: 0;
-    }
-    #search-input {
-      font-family: 'Minecraft', monospace; font-size: 13px;
-      padding: 8px 14px; width: 320px; border: 3px solid #555; border-right: none;
-      background: #c6c6c6; color: #3f3f3f; outline: none;
-      box-shadow: inset 2px 2px 0 #8b8b8b, inset -2px -2px 0 #fff;
-    }
-    #search-input::placeholder { color: #7a7a7a; }
-    #search-btn {
-      font-family: 'Minecraft', monospace; font-size: 13px;
-      padding: 8px 14px; border: 3px solid #555;
-      background: #8b8b8b; color: #fff; cursor: pointer;
-      box-shadow: inset 2px 2px 0 #aaa, inset -2px -2px 0 #555;
-    }
+  // Color palette for the parchment frame
+  const OUTER_DARK  = '#3d2e1a';
+  const OUTER_MID   = '#6b5433';
+  const FRAME_DARK  = '#8a7456';
+  const FRAME_MID   = '#b8a47e';
+  const FRAME_LIGHT = '#cdb99a';
+  const FRAME_HI    = '#ddd0b4';
+  const INNER_DARK  = '#5a4a30';
 
-    #coords {
-      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-      z-index: 1000; font-family: 'Minecraft', monospace; font-size: 12px;
-      color: #fff; background: rgba(0,0,0,0.7); padding: 6px 14px; border: 2px solid #555;
-    }
-    .leaflet-control-zoom a {
-      font-family: 'Minecraft', monospace !important;
-      background: #8b8b8b !important; border: 2px solid #555 !important;
-      color: #fff !important;
-    }
-    .leaflet-control-attribution {
-      font-family: 'Minecraft', monospace !important; font-size: 10px !important;
-      background: rgba(0,0,0,0.6) !important; color: #aaa !important;
-    }
-
-    .player-marker {
-      image-rendering: pixelated;
-      transition: transform 0.3s ease;
-    }
-    #locate-btn {
-      position: absolute; bottom: 48px; right: 10px; z-index: 1000;
-      width: 34px; height: 34px; border: 2px solid #555;
-      background: #6b6b6b; cursor: pointer; display: flex;
-      align-items: center; justify-content: center;
-      box-shadow: inset 2px 2px 0 #888, inset -2px -2px 0 #444;
-    }
-    #locate-btn:hover { background: #888; }
-    #locate-btn.active { background: #4a8c3f; }
-    #locate-btn svg { width: 18px; height: 18px; }
-  </style>
-</head>
-<body>
-  <div id="controls">
-    <button class="ctrl-btn active" id="btn-mc" onclick="setView('mc')">Minecraft</button>
-    <button class="ctrl-btn" id="btn-sat" onclick="setView('sat')">Satellite</button>
-    <button class="ctrl-btn" id="btn-roads" onclick="setView('roads')">Roads</button>
-  </div>
-
-  <div id="search-container">
-    <input type="text" id="search-input" placeholder="Search any place..." />
-    <button id="search-btn" onclick="doSearch()">Go</button>
-  </div>
-
-  <div id="map"></div>
-  <div id="coords">X: 0, Z: 0</div>
-
-  <button id="locate-btn" onclick="toggleLocate()" title="Show my location">
-    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5">
-      <circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
-    </svg>
-  </button>
-
-  <script>
-    const map = L.map('map', {
-      center: [40.767, -73.975],
-      zoom: 16,
-      minZoom: 2,
-      maxZoom: 18,
-    });
-
-    const mcLayer = L.tileLayer('/tiles/{z}/{x}/{y}.png?v=${Date.now()}', {
-      maxNativeZoom: 16,
-      maxZoom: 18,
-      attribution: 'Minecraft Map | &copy; OSM',
-    });
-
-    const satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19, attribution: '&copy; Esri',
-    });
-
-    const roadsLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '&copy; OSM',
-    });
-
-    let activeLayer = mcLayer;
-    mcLayer.addTo(map);
-
-    function setView(mode) {
-      map.removeLayer(activeLayer);
-      document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
-
-      if (mode === 'mc') {
-        activeLayer = mcLayer;
-        document.getElementById('btn-mc').classList.add('active');
-        document.getElementById('map').style.imageRendering = 'pixelated';
-      } else if (mode === 'sat') {
-        activeLayer = satLayer;
-        document.getElementById('btn-sat').classList.add('active');
-        document.getElementById('map').style.imageRendering = 'auto';
-      } else {
-        activeLayer = roadsLayer;
-        document.getElementById('btn-roads').classList.add('active');
-        document.getElementById('map').style.imageRendering = 'auto';
+  function drawEdgeTop(w: number, h: number): Buffer {
+    const c = createCanvas(w, h);
+    const ctx = c.getContext('2d');
+    // Outer dark border (2px)
+    ctx.fillStyle = OUTER_DARK;
+    ctx.fillRect(0, 0, w, px * 2);
+    // Outer mid
+    ctx.fillStyle = OUTER_MID;
+    ctx.fillRect(0, px * 2, w, px);
+    // Highlight band
+    ctx.fillStyle = FRAME_HI;
+    ctx.fillRect(0, px * 3, w, px);
+    // Main frame fill
+    ctx.fillStyle = FRAME_LIGHT;
+    ctx.fillRect(0, px * 4, w, px * 2);
+    ctx.fillStyle = FRAME_MID;
+    ctx.fillRect(0, px * 6, w, h - px * 8);
+    // Inner shadow
+    ctx.fillStyle = FRAME_DARK;
+    ctx.fillRect(0, h - px * 2, w, px);
+    ctx.fillStyle = INNER_DARK;
+    ctx.fillRect(0, h - px, w, px);
+    // Add pixel noise for texture
+    for (let x = 0; x < w; x += px) {
+      const hash = (x * 73856093) & 0xFFFF;
+      if (hash % 7 === 0) {
+        const ny = px * 4 + (hash % 4) * px;
+        ctx.fillStyle = FRAME_MID;
+        ctx.fillRect(x, ny, px, px);
       }
-      activeLayer.addTo(map);
-    }
-
-    map.on('mousemove', e => {
-      const mcX = Math.floor(e.latlng.lng * 1000);
-      const mcZ = Math.floor(-e.latlng.lat * 1000);
-      document.getElementById('coords').textContent =
-        'X: ' + mcX + '  Z: ' + mcZ + '  (' + e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4) + ')';
-    });
-
-    document.getElementById('search-input').addEventListener('keypress', e => {
-      if (e.key === 'Enter') doSearch();
-    });
-
-    async function doSearch() {
-      const q = document.getElementById('search-input').value.trim();
-      if (!q) return;
-      const coordMatch = q.match(/^(-?\\d+\\.?\\d*)\\s*,\\s*(-?\\d+\\.?\\d*)$/);
-      if (coordMatch) {
-        map.setView([parseFloat(coordMatch[1]), parseFloat(coordMatch[2])], 16);
-        return;
-      }
-      try {
-        const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q) + '&limit=1',
-          { headers: { 'User-Agent': 'MinecraftMap/1.0' } });
-        const data = await res.json();
-        if (data.length > 0) map.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 16);
-      } catch(e) { console.error('Search failed', e); }
-    }
-
-    // ---- Player location marker ----
-    function makePlayerIcon() {
-      // Pixel art location pin: 7x8 grid, each cell = 3px = 21x24 total
-      const px = 3;
-      const cols = 7, rows_n = 8;
-      const w = cols * px, h = rows_n * px;
-      const c = document.createElement('canvas');
-      c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
-
-      // 0=transparent, 1=black outline, 2=white fill, 3=light gray
-      // Teardrop/pin shape: pointed tip at top, round body
-      const rows = [
-        [0,0,0,1,0,0,0],
-        [0,0,1,2,1,0,0],
-        [0,1,2,2,2,1,0],
-        [1,2,2,2,2,2,1],
-        [1,2,2,3,2,2,1],
-        [1,2,2,2,2,2,1],
-        [0,1,2,2,2,1,0],
-        [0,0,1,1,1,0,0],
-      ];
-      const colors = ['rgba(0,0,0,0)', '#111', '#f0f0f0', '#b0b0b0'];
-
-      for (let y = 0; y < rows.length; y++) {
-        for (let x = 0; x < rows[y].length; x++) {
-          if (rows[y][x] === 0) continue;
-          ctx.fillStyle = colors[rows[y][x]];
-          ctx.fillRect(x * px, y * px, px, px);
-        }
-      }
-      return c.toDataURL();
-    }
-
-    let playerMarker = null;
-    let watchId = null;
-    let heading = 0;
-    let locateActive = false;
-
-    function toggleLocate() {
-      const btn = document.getElementById('locate-btn');
-      if (locateActive) {
-        // Turn off
-        locateActive = false;
-        btn.classList.remove('active');
-        if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-        if (playerMarker) { map.removeLayer(playerMarker); playerMarker = null; }
-        window.removeEventListener('deviceorientation', onOrientation);
-        window.removeEventListener('deviceorientationabsolute', onOrientation);
-        return;
-      }
-
-      if (!navigator.geolocation) { alert('Geolocation not available'); return; }
-
-      locateActive = true;
-      btn.classList.add('active');
-
-      const iconUrl = makePlayerIcon();
-      const playerIcon = L.icon({
-        iconUrl: iconUrl,
-        iconSize: [21, 24],
-        iconAnchor: [10, 12],
-        className: 'player-marker',
-      });
-
-      watchId = navigator.geolocation.watchPosition(
-        pos => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          if (pos.coords.heading && pos.coords.heading > 0) heading = pos.coords.heading;
-
-          if (!playerMarker) {
-            playerMarker = L.marker([lat, lng], { icon: playerIcon, zIndexOffset: 9999 }).addTo(map);
-            map.setView([lat, lng], 16);
-          } else {
-            playerMarker.setLatLng([lat, lng]);
-          }
-          updateMarkerRotation();
-        },
-        err => { console.error('Geolocation error:', err); alert('Could not get location'); locateActive = false; btn.classList.remove('active'); },
-        { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
-      );
-
-      // Device orientation for compass heading
-      if ('ondeviceorientationabsolute' in window) {
-        window.addEventListener('deviceorientationabsolute', onOrientation);
-      } else if ('ondeviceorientation' in window) {
-        window.addEventListener('deviceorientation', onOrientation);
+      if (hash % 11 === 0) {
+        const ny = px * 5 + (hash % 3) * px;
+        ctx.fillStyle = FRAME_HI;
+        ctx.fillRect(x, ny, px, px);
       }
     }
+    return c.toBuffer('image/png');
+  }
 
-    function onOrientation(e) {
-      let h = null;
-      if (e.webkitCompassHeading !== undefined) {
-        h = e.webkitCompassHeading; // iOS
-      } else if (e.alpha !== null) {
-        h = (360 - e.alpha) % 360; // Android
-      }
-      if (h !== null) { heading = h; updateMarkerRotation(); }
+  function drawEdgeLeft(w: number, h: number): Buffer {
+    const c = createCanvas(w, h);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = OUTER_DARK;
+    ctx.fillRect(0, 0, px * 2, h);
+    ctx.fillStyle = OUTER_MID;
+    ctx.fillRect(px * 2, 0, px, h);
+    ctx.fillStyle = FRAME_HI;
+    ctx.fillRect(px * 3, 0, px, h);
+    ctx.fillStyle = FRAME_LIGHT;
+    ctx.fillRect(px * 4, 0, px * 2, h);
+    ctx.fillStyle = FRAME_MID;
+    ctx.fillRect(px * 6, 0, w - px * 8, h);
+    ctx.fillStyle = FRAME_DARK;
+    ctx.fillRect(w - px * 2, 0, px, h);
+    ctx.fillStyle = INNER_DARK;
+    ctx.fillRect(w - px, 0, px, h);
+    for (let y = 0; y < h; y += px) {
+      const hash = (y * 19349663) & 0xFFFF;
+      if (hash % 7 === 0) { ctx.fillStyle = FRAME_MID; ctx.fillRect(px * 4 + (hash % 3) * px, y, px, px); }
+      if (hash % 11 === 0) { ctx.fillStyle = FRAME_HI; ctx.fillRect(px * 5 + (hash % 2) * px, y, px, px); }
     }
+    return c.toBuffer('image/png');
+  }
 
-    function updateMarkerRotation() {
-      if (!playerMarker) return;
-      const el = playerMarker.getElement();
-      if (el) el.style.transform = el.style.transform.replace(/rotate\\([^)]*\\)/, '') + ' rotate(' + heading + 'deg)';
-    }
-  </script>
-</body>
-</html>`);
+  function drawCorner(pos: string): Buffer {
+    const c = createCanvas(C, C);
+    const ctx = c.getContext('2d');
+
+    // Fill base
+    ctx.fillStyle = FRAME_MID;
+    ctx.fillRect(0, 0, C, C);
+
+    // Outer edges
+    ctx.fillStyle = OUTER_DARK;
+    if (pos.includes('t')) ctx.fillRect(0, 0, C, px * 2);
+    if (pos.includes('b')) ctx.fillRect(0, C - px * 2, C, px * 2);
+    if (pos.includes('l')) ctx.fillRect(0, 0, px * 2, C);
+    if (pos.includes('r')) ctx.fillRect(C - px * 2, 0, px * 2, C);
+
+    ctx.fillStyle = OUTER_MID;
+    if (pos.includes('t')) ctx.fillRect(px * 2, px * 2, C - px * 4, px);
+    if (pos.includes('b')) ctx.fillRect(px * 2, C - px * 3, C - px * 4, px);
+    if (pos.includes('l')) ctx.fillRect(px * 2, px * 2, px, C - px * 4);
+    if (pos.includes('r')) ctx.fillRect(C - px * 3, px * 2, px, C - px * 4);
+
+    // Highlight band
+    ctx.fillStyle = FRAME_HI;
+    if (pos.includes('t')) ctx.fillRect(px * 3, px * 3, C - px * 6, px);
+    if (pos.includes('l')) ctx.fillRect(px * 3, px * 3, px, C - px * 6);
+
+    // Light fill
+    ctx.fillStyle = FRAME_LIGHT;
+    const inner = px * 4;
+    ctx.fillRect(inner, inner, C - inner * 2, C - inner * 2);
+
+    // Inner shadow edges
+    ctx.fillStyle = INNER_DARK;
+    if (pos.includes('t')) ctx.fillRect(C - px, px * 2, px, C - px * 2); // right inner if top-right
+    if (pos.includes('b')) ctx.fillRect(0, C - px, C, px);
+
+    ctx.fillStyle = FRAME_DARK;
+    const ie = C - px * 2;
+    if (pos === 'tl') { ctx.fillRect(ie, px * 4, px, C - px * 4); ctx.fillRect(px * 4, ie, C - px * 4, px); }
+    if (pos === 'tr') { ctx.fillRect(px, px * 4, px, C - px * 4); ctx.fillRect(px, ie, C - px * 4, px); }
+    if (pos === 'bl') { ctx.fillRect(ie, px, px, C - px * 4); ctx.fillRect(px * 4, px, C - px * 4, px); }
+    if (pos === 'br') { ctx.fillRect(px, px, px, C - px * 4); ctx.fillRect(px, px, C - px * 4, px); }
+
+    // Corner accent — darker nub
+    ctx.fillStyle = OUTER_DARK;
+    if (pos === 'tl') { ctx.fillRect(0, 0, px * 3, px * 3); }
+    if (pos === 'tr') { ctx.fillRect(C - px * 3, 0, px * 3, px * 3); }
+    if (pos === 'bl') { ctx.fillRect(0, C - px * 3, px * 3, px * 3); }
+    if (pos === 'br') { ctx.fillRect(C - px * 3, C - px * 3, px * 3, px * 3); }
+
+    return c.toBuffer('image/png');
+  }
+
+  // Generate all 8 pieces
+  cache['edge-top'] = drawEdgeTop(px * 16, T);
+  // Bottom edge = top edge drawn flipped
+  cache['edge-bottom'] = (() => {
+    const c = createCanvas(px * 16, T);
+    const ctx = c.getContext('2d');
+    // Redraw top edge logic but reversed (dark at bottom, highlight at top)
+    ctx.fillStyle = INNER_DARK;
+    ctx.fillRect(0, 0, px * 16, px);
+    ctx.fillStyle = FRAME_DARK;
+    ctx.fillRect(0, px, px * 16, px);
+    ctx.fillStyle = FRAME_MID;
+    ctx.fillRect(0, px * 2, px * 16, T - px * 8);
+    ctx.fillStyle = FRAME_LIGHT;
+    ctx.fillRect(0, T - px * 6, px * 16, px * 2);
+    ctx.fillStyle = FRAME_HI;
+    ctx.fillRect(0, T - px * 4, px * 16, px);
+    ctx.fillStyle = OUTER_MID;
+    ctx.fillRect(0, T - px * 3, px * 16, px);
+    ctx.fillStyle = OUTER_DARK;
+    ctx.fillRect(0, T - px * 2, px * 16, px * 2);
+    return c.toBuffer('image/png');
+  })();
+  cache['edge-left'] = drawEdgeLeft(T, px * 16);
+  // Right edge = left edge drawn flipped
+  cache['edge-right'] = (() => {
+    const c = createCanvas(T, px * 16);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = INNER_DARK;
+    ctx.fillRect(0, 0, px, px * 16);
+    ctx.fillStyle = FRAME_DARK;
+    ctx.fillRect(px, 0, px, px * 16);
+    ctx.fillStyle = FRAME_MID;
+    ctx.fillRect(px * 2, 0, T - px * 8, px * 16);
+    ctx.fillStyle = FRAME_LIGHT;
+    ctx.fillRect(T - px * 6, 0, px * 2, px * 16);
+    ctx.fillStyle = FRAME_HI;
+    ctx.fillRect(T - px * 4, 0, px, px * 16);
+    ctx.fillStyle = OUTER_MID;
+    ctx.fillRect(T - px * 3, 0, px, px * 16);
+    ctx.fillStyle = OUTER_DARK;
+    ctx.fillRect(T - px * 2, 0, px * 2, px * 16);
+    return c.toBuffer('image/png');
+  })();
+  cache['corner-tl'] = drawCorner('tl');
+  cache['corner-tr'] = drawCorner('tr');
+  cache['corner-bl'] = drawCorner('bl');
+  cache['corner-br'] = drawCorner('br');
+
+  return cache;
+}
+
+const frameTextures = generateFrameTextures();
+
+app.get('/frame/:piece.png', (req, res) => {
+  const buf = frameTextures[req.params.piece];
+  if (!buf) return res.status(404).send('');
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'no-cache, no-store');
+  res.send(buf);
 });
 
-app.listen(PORT, () => {
+// Serve static assets from public/
+app.use('/icons', express.static(resolve('public/icons')));
+app.use('/fonts', express.static(resolve('public')));
+app.use('/menu', express.static(resolve('public/menu')));
+app.use(express.static(resolve('public')));
+
+// Service worker for browser tile caching
+app.get('/sw.js', (_req, res) => {
+  res.set('Content-Type', 'application/javascript');
+  res.send(`
+var CACHE_NAME = 'mc-tiles-v2';
+var TILE_RE = /\\/tiles\\/\\d+\\/\\d+\\/\\d+\\.png/;
+self.addEventListener('install', function() { self.skipWaiting(); });
+self.addEventListener('activate', function(e) {
+  e.waitUntil(
+    caches.keys().then(function(keys) {
+      return Promise.all(keys.filter(function(k) { return k !== CACHE_NAME; }).map(function(k) { return caches.delete(k); }));
+    }).then(function() { return self.clients.claim(); })
+  );
+});
+self.addEventListener('fetch', function(e) {
+  var url = new URL(e.request.url);
+  if (!TILE_RE.test(url.pathname)) return;
+  // Strip query params for cache key (ignore ?v= cache buster)
+  var cacheUrl = url.origin + url.pathname;
+  var cacheReq = new Request(cacheUrl);
+  e.respondWith(
+    caches.open(CACHE_NAME).then(function(cache) {
+      return cache.match(cacheReq).then(function(cached) {
+        if (cached) return cached;
+        return fetch(e.request).then(function(resp) {
+          if (resp.ok) cache.put(cacheReq, resp.clone());
+          return resp;
+        }).catch(function() {
+          // Network failed — return empty response instead of crashing
+          return new Response('', { status: 503, statusText: 'Tile unavailable' });
+        });
+      });
+    }).catch(function() {
+      // Cache API failed — just fetch directly
+      return fetch(e.request);
+    })
+  );
+});
+  `);
+});
+
+// POI proxy — fetches amenities from Overpass for a bounding box
+app.get('/pois', async (req, res) => {
+  const { s, w, n, e } = req.query;
+  if (!s || !w || !n || !e) return res.json([]);
+  const bbox = `${s},${w},${n},${e}`;
+  const query = `[out:json][timeout:15][bbox:${bbox}];(node["amenity"]["name"];node["shop"]["name"];way["amenity"]["name"];way["shop"]["name"];);out center 500;`;
+  try {
+    const r = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(query),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      signal: AbortSignal.timeout(12000),
+    });
+    const data = await r.json();
+    const pois = (data.elements || []).map((el: any) => {
+      const t = el.tags || {};
+      const amenity = t.amenity || t.shop || 'other';
+      const lat = el.lat || el.center?.lat;
+      const lng = el.lon || el.center?.lon;
+      if (!lat || !lng) return null;
+      return { lat, lng, name: t.name || '', type: amenity };
+    }).filter((p: any) => p && p.name);
+    res.json(pois);
+  } catch {
+    res.json([]);
+  }
+});
+
+// ============================================
+// Friends API
+// ============================================
+
+app.get('/api/friends', (req, res) => {
+  const session = getSession(req.cookies?.mc_session);
+  if (!session) return res.status(401).json({ error: 'Not logged in' });
+
+  // Get accepted friends
+  const friends = db.prepare(`
+    SELECT p.id, p.player_name, p.friend_code FROM friendships f
+    JOIN players p ON p.id = CASE WHEN f.player_id = ? THEN f.friend_id ELSE f.player_id END
+    WHERE (f.player_id = ? OR f.friend_id = ?) AND f.status = 'accepted'
+  `).all(session.playerId, session.playerId, session.playerId) as any[];
+
+  // Get pending requests TO me
+  const pending = db.prepare(`
+    SELECT f.id as friendship_id, p.id, p.player_name, p.friend_code FROM friendships f
+    JOIN players p ON p.id = f.player_id
+    WHERE f.friend_id = ? AND f.status = 'pending'
+  `).all(session.playerId) as any[];
+
+  // Get my outgoing requests
+  const sent = db.prepare(`
+    SELECT f.id as friendship_id, p.id, p.player_name FROM friendships f
+    JOIN players p ON p.id = f.friend_id
+    WHERE f.player_id = ? AND f.status = 'pending'
+  `).all(session.playerId) as any[];
+
+  // Mark online status
+  const onlineIds = new Set<number>();
+  for (const [, client] of wsClients) {
+    if (client.playerId) onlineIds.add(client.playerId);
+  }
+
+  res.json({
+    friends: friends.map((f: any) => ({ ...f, online: onlineIds.has(f.id) })),
+    pending,
+    sent,
+  });
+});
+
+app.post('/api/friends/add', (req, res) => {
+  const session = getSession(req.cookies?.mc_session);
+  if (!session) return res.status(401).json({ error: 'Not logged in' });
+
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: 'Friend code required' });
+
+  const friend = db.prepare('SELECT id, player_name FROM players WHERE friend_code = ?').get(code.toUpperCase()) as any;
+  if (!friend) return res.status(404).json({ error: 'Player not found' });
+  if (friend.id === session.playerId) return res.status(400).json({ error: "That's your own code!" });
+
+  // Check if already friends or pending
+  const existing = db.prepare('SELECT id, status FROM friendships WHERE (player_id = ? AND friend_id = ?) OR (player_id = ? AND friend_id = ?)').get(session.playerId, friend.id, friend.id, session.playerId) as any;
+  if (existing) {
+    if (existing.status === 'accepted') return res.status(400).json({ error: 'Already friends!' });
+    return res.status(400).json({ error: 'Request already pending' });
+  }
+
+  db.prepare('INSERT INTO friendships (player_id, friend_id, status) VALUES (?, ?, ?)').run(session.playerId, friend.id, 'pending');
+
+  // Notify friend via WebSocket
+  broadcastToPlayer(friend.id, { type: 'friend_request', from: session.playerName });
+
+  res.json({ ok: true, friendName: friend.player_name });
+});
+
+app.post('/api/friends/accept', (req, res) => {
+  const session = getSession(req.cookies?.mc_session);
+  if (!session) return res.status(401).json({ error: 'Not logged in' });
+
+  const { friendshipId } = req.body;
+  db.prepare('UPDATE friendships SET status = ? WHERE id = ? AND friend_id = ?').run('accepted', friendshipId, session.playerId);
+
+  // Notify the requester
+  const friendship = db.prepare('SELECT player_id FROM friendships WHERE id = ?').get(friendshipId) as any;
+  if (friendship) broadcastToPlayer(friendship.player_id, { type: 'friend_accepted', by: session.playerName });
+
+  res.json({ ok: true });
+});
+
+app.post('/api/friends/remove', (req, res) => {
+  const session = getSession(req.cookies?.mc_session);
+  if (!session) return res.status(401).json({ error: 'Not logged in' });
+
+  const { friendId } = req.body;
+  db.prepare('DELETE FROM friendships WHERE (player_id = ? AND friend_id = ?) OR (player_id = ? AND friend_id = ?)').run(session.playerId, friendId, friendId, session.playerId);
+  res.json({ ok: true });
+});
+
+// ============================================
+// WebSocket server — real-time location + chat
+// ============================================
+
+const httpServer = createServer(app);
+
+interface WSClient {
+  ws: WebSocket;
+  playerId: number;
+  playerName: string;
+  lat: number;
+  lng: number;
+  lastUpdate: number;
+}
+
+const wsClients = new Map<WebSocket, WSClient>();
+
+const wss = new WebSocketServer({ server: httpServer });
+
+wss.on('connection', (ws, req) => {
+  // Auth from cookie
+  const cookieStr = req.headers.cookie || '';
+  const match = cookieStr.match(/mc_session=([^;]+)/);
+  const session = match ? getSession(match[1]) : null;
+
+  if (!session) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' }));
+    ws.close();
+    return;
+  }
+
+  const client: WSClient = {
+    ws, playerId: session.playerId, playerName: session.playerName,
+    lat: 0, lng: 0, lastUpdate: Date.now(),
+  };
+  wsClients.set(ws, client);
+  console.log(`  WS: ${session.playerName} connected (${wsClients.size} online)`);
+
+  // Send welcome
+  ws.send(JSON.stringify({ type: 'welcome', playerName: session.playerName }));
+
+  // Notify friends that this player is online
+  broadcastToFriends(session.playerId, { type: 'friend_online', playerId: session.playerId, playerName: session.playerName });
+
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+
+      if (msg.type === 'location') {
+        client.lat = msg.lat;
+        client.lng = msg.lng;
+        client.lastUpdate = Date.now();
+        // Broadcast to friends
+        broadcastToFriends(session.playerId, {
+          type: 'friend_location',
+          playerId: session.playerId,
+          playerName: session.playerName,
+          lat: msg.lat, lng: msg.lng,
+        });
+      }
+
+      if (msg.type === 'chat') {
+        const content = (msg.content || '').trim().substring(0, 200);
+        if (!content) return;
+        // Save to DB
+        db.prepare('INSERT INTO messages (from_id, content) VALUES (?, ?)').run(session.playerId, content);
+        // Broadcast to all friends
+        broadcastToFriends(session.playerId, {
+          type: 'chat',
+          playerId: session.playerId,
+          playerName: session.playerName,
+          content,
+          timestamp: Date.now(),
+        });
+        // Echo back to sender
+        ws.send(JSON.stringify({
+          type: 'chat',
+          playerId: session.playerId,
+          playerName: session.playerName,
+          content,
+          timestamp: Date.now(),
+          self: true,
+        }));
+      }
+    } catch {}
+  });
+
+  ws.on('close', () => {
+    wsClients.delete(ws);
+    console.log(`  WS: ${session.playerName} disconnected (${wsClients.size} online)`);
+    broadcastToFriends(session.playerId, { type: 'friend_offline', playerId: session.playerId, playerName: session.playerName });
+  });
+});
+
+function broadcastToPlayer(playerId: number, msg: any) {
+  const data = JSON.stringify(msg);
+  for (const [, client] of wsClients) {
+    if (client.playerId === playerId && client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(data);
+    }
+  }
+}
+
+function broadcastToFriends(playerId: number, msg: any) {
+  // Get this player's accepted friends
+  const friends = db.prepare(`
+    SELECT CASE WHEN player_id = ? THEN friend_id ELSE player_id END as fid
+    FROM friendships WHERE (player_id = ? OR friend_id = ?) AND status = 'accepted'
+  `).all(playerId, playerId, playerId) as any[];
+  const friendIds = new Set(friends.map((f: any) => f.fid));
+
+  const data = JSON.stringify(msg);
+  for (const [, client] of wsClients) {
+    if (friendIds.has(client.playerId) && client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(data);
+    }
+  }
+}
+
+// Viewer — served from public/index.html via express.static
+
+httpServer.listen(PORT, () => {
   console.log(`\n  Minecraft Map: http://localhost:${PORT}`);
-  console.log(`  Uses the same pipeline that produced the approved output.`);
+  console.log(`  WebSocket server ready`);
   console.log(`  First tile load ~2-3s, then cached.\n`);
 });
+

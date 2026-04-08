@@ -10,14 +10,22 @@
   "dependencies": {
     "@mapbox/vector-tile": "^2.0.4",
     "@types/express": "^5.0.6",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.8.0",
     "canvas": "^3.2.3",
+    "cookie-parser": "^1.4.7",
     "express": "^5.2.1",
     "pbf": "^4.0.1",
     "pmtiles": "^4.4.0",
-    "prismarine-nbt": "^2.8.0"
+    "prismarine-nbt": "^2.8.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cookie-parser": "^1.4.10",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

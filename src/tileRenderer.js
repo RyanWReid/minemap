@@ -69,9 +69,16 @@ function tileToLatLng(z, x, y) {
 // ============================================
 
 function getSourceTile(z, x, y) {
-  // Clamp to max source zoom — Leaflet handles client-side overzooming via maxNativeZoom
-  const sz = Math.min(z, MAX_SOURCE_ZOOM);
-  return { sz, sx: x, sy: y, scale: 1, offsetX: 0, offsetY: 0 };
+  if (z <= MAX_SOURCE_ZOOM) {
+    return { sz: z, sx: x, sy: y, scale: 1, offsetX: 0, offsetY: 0 };
+  }
+  const diff = z - MAX_SOURCE_ZOOM;
+  const factor = Math.pow(2, diff);
+  const sx = Math.floor(x / factor);
+  const sy = Math.floor(y / factor);
+  const offsetX = (x % factor) / factor;
+  const offsetY = (y % factor) / factor;
+  return { sz: MAX_SOURCE_ZOOM, sx, sy, scale: factor, offsetX, offsetY };
 }
 
 // ============================================
