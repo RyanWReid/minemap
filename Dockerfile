@@ -20,5 +20,9 @@ COPY app/ .
 
 EXPOSE 3001
 
+# Persist tile and Overpass caches across deploys
+VOLUME /app/tile-cache
+VOLUME /app/overpass-cache
+
 # Default: rendering enabled (set STATIC_ONLY=1 to disable rendering and serve cached tiles only)
 CMD ["npx", "tsx", "src/serve.ts"]

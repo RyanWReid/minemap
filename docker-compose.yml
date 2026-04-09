@@ -7,6 +7,7 @@ services:
       - OVERPASS_URL=http://overpass:80/api/interpreter
     volumes:
       - tile-cache:/app/tile-cache
+      - overpass-cache:/app/overpass-cache
       - app-data:/app/data
     depends_on:
       overpass:
@@ -35,5 +36,6 @@ services:
 
 volumes:
   tile-cache:
+  overpass-cache:
   app-data:
   overpass-db:
