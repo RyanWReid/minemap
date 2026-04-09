@@ -8,6 +8,7 @@ import cookieParser from 'cookie-parser';
 import crypto from 'crypto';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { fork } from 'child_process';
 
 // Pipeline — switch between v1 and v2 via PIPELINE_VERSION env var
 import { renderParentTile as renderV1 } from './pipeline/v1.js';
@@ -281,7 +282,7 @@ const parentCache = new Map<string, Buffer>();
 // ============================================
 // Parent render queue — paced to avoid Overpass rate limits
 // ============================================
-const RENDER_MAX_CONCURRENT = 3; // max parent tiles rendering at once
+const RENDER_MAX_CONCURRENT = 2; // max worker threads rendering at once
 let renderActive = 0;
 
 interface RenderJob {
@@ -310,51 +311,58 @@ function drainRenderQueue() {
   }
 }
 
+const WORKER_PATH = new URL('./render-worker.ts', import.meta.url).pathname;
+
 async function executeRenderJob(job: RenderJob): Promise<void> {
   const start = Date.now();
-  console.log(`  [${PIPELINE_VERSION}] Rendering parent ${job.parentZ}/${job.parentX}/${job.parentY}`);
-  const renderResult = await renderParentTile(job.parentZ, job.parentX, job.parentY);
-  if (!renderResult) return; // Overpass failed — tiles stay ungenerated
-  const { buffer: parentPNG, complete } = renderResult;
+  console.log(`  [${PIPELINE_VERSION}] Rendering parent ${job.parentZ}/${job.parentX}/${job.parentY} (child process)`);
 
-  // Cache parent tile buffer
-  if (complete) {
-    const parentKey = `parent_${job.parentZ}_${job.parentX}_${job.parentY}`;
-    parentCache.set(parentKey, parentPNG);
-    if (parentCache.size > 50) {
-      const first = parentCache.keys().next().value;
-      if (first) parentCache.delete(first);
-    }
-  }
+  return new Promise((resolve, reject) => {
+    const child = fork(WORKER_PATH, [], {
+      execArgv: ['--import', 'tsx'],
+      env: { ...process.env, RENDER_Z: String(job.parentZ), RENDER_X: String(job.parentX), RENDER_Y: String(job.parentY), RENDER_PIPELINE: PIPELINE_VERSION },
+      stdio: ['pipe', 'inherit', 'inherit', 'ipc'],
+    });
 
-  const parentImg = await loadImage(parentPNG);
-  const parentW = parentImg.width;
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error('Render process timed out after 120s'));
+    }, 120_000);
 
-  const factor = 4;
-  const subSize = parentW / factor;
-
-  for (let sy = 0; sy < factor; sy++) {
-    for (let sx = 0; sx < factor; sx++) {
-      const tileX = job.parentX * factor + sx;
-      const tileY = job.parentY * factor + sy;
-      const key = `16_${tileX}_${tileY}`;
-      const diskPath = join(CACHE_DIR, `${key}.png`);
-
-      const canvas = createCanvas(256, 256);
-      const ctx = canvas.getContext('2d');
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(parentImg, sx * subSize, sy * subSize, subSize, subSize, 0, 0, 256, 256);
-      const buf = canvas.toBuffer('image/png');
-
-      if (complete) {
-        writeFileSync(diskPath, buf);
-        memCacheSet(key, buf);
+    child.on('message', (msg: any) => {
+      clearTimeout(timeout);
+      if (!msg.ok) {
+        resolve();
+        return;
       }
-    }
-  }
 
-  const qLen = renderQueue.length;
-  console.log(`  Parent ${job.parentZ}/${job.parentX}/${job.parentY} -> 16 tiles in ${Date.now() - start}ms${complete ? '' : ' (INCOMPLETE)'}${qLen > 0 ? ` [${qLen} queued, ${renderActive} active]` : ''}`);
+      for (const tile of msg.subTiles) {
+        const buf = Buffer.from(tile.buf.data);
+        const diskPath = join(CACHE_DIR, `${tile.key}.png`);
+        if (msg.complete) {
+          writeFileSync(diskPath, buf);
+        }
+        memCacheSet(tile.key, buf);
+      }
+
+      const qLen = renderQueue.length;
+      console.log(`  Parent ${job.parentZ}/${job.parentX}/${job.parentY} -> 16 tiles in ${Date.now() - start}ms${msg.complete ? '' : ' (INCOMPLETE)'}${qLen > 0 ? ` [${qLen} queued, ${renderActive} active]` : ''}`);
+      resolve();
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timeout);
+      console.error(`  Render process error for ${job.parentZ}/${job.parentX}/${job.parentY}:`, err);
+      reject(err);
+    });
+
+    child.on('exit', (code) => {
+      clearTimeout(timeout);
+      if (code !== 0 && code !== null) {
+        reject(new Error(`Render process exited with code ${code}`));
+      }
+    });
+  });
 }
 
 /**
