@@ -2104,12 +2104,6 @@
       document.getElementById('place-card').classList.remove('open');
       document.getElementById('dir-panel').classList.add('open');
 
-      // Fallback to player marker position if userLoc isn't set yet
-      if (!userLoc && playerMarker) {
-        var ll = playerMarker.getLatLng();
-        userLoc = { lat: ll.lat, lng: ll.lng };
-      }
-
       routePoints = [];
       if (userLoc) {
         routePoints.push({ lat: userLoc.lat, lng: userLoc.lng, value: 'Your location', placeholder: 'From...' });
@@ -2126,20 +2120,6 @@
 
       renderDirInputs();
       tryAutoRoute();
-
-      // If we still don't have a location, actively request one
-      if (!userLoc && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(function(p) {
-          userLoc = { lat: p.coords.latitude, lng: p.coords.longitude };
-          if (routePoints[0] && routePoints[0].lat == null) {
-            routePoints[0].lat = userLoc.lat;
-            routePoints[0].lng = userLoc.lng;
-            routePoints[0].value = 'Your location';
-            renderDirInputs();
-            tryAutoRoute();
-          }
-        }, function(){}, { enableHighAccuracy: true, timeout: 10000 });
-      }
     }
 
     function closeDirections() {
@@ -3164,7 +3144,6 @@
       watchId = navigator.geolocation.watchPosition(
         pos => {
           const lat = pos.coords.latitude, lng = pos.coords.longitude;
-          userLoc = { lat: lat, lng: lng }; // keep userLoc fresh for directions
           if (pos.coords.heading && pos.coords.heading > 0) heading = pos.coords.heading;
           trackGPSDistance(lat, lng);
           if (!playerMarker) {
