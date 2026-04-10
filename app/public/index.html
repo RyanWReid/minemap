@@ -2913,13 +2913,24 @@
       if (navCompassJitterInterval) { clearInterval(navCompassJitterInterval); navCompassJitterInterval = null; }
     }
 
-    // ---- Player location marker ----
+    // ---- Player location marker — directional arrow pointing forward ----
     function makePlayerIcon() {
       const px = 3, c = document.createElement('canvas');
       c.width = 21; c.height = 24;
       const ctx = c.getContext('2d');
-      const rows = [[0,0,0,1,0,0,0],[0,0,1,2,1,0,0],[0,1,2,2,2,1,0],[1,2,2,2,2,2,1],[1,2,2,3,2,2,1],[1,2,2,2,2,2,1],[0,1,2,2,2,1,0],[0,0,1,1,1,0,0]];
-      const colors = ['rgba(0,0,0,0)', '#111', '#f0f0f0', '#b0b0b0'];
+      // Arrow pointing up (north) - 1=outline, 2=fill light, 3=fill dark
+      //              ↑ forward
+      const rows = [
+        [0,0,0,1,0,0,0],
+        [0,0,1,2,1,0,0],
+        [0,1,2,2,2,1,0],
+        [0,1,2,2,2,1,0],
+        [1,2,2,2,2,2,1],
+        [1,2,2,3,2,2,1],
+        [1,2,3,3,3,2,1],
+        [1,3,3,3,3,3,1],
+      ];
+      const colors = ['rgba(0,0,0,0)', '#000', '#55aaff', '#2266cc'];
       for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[y].length; x++) { if (rows[y][x] === 0) continue; ctx.fillStyle = colors[rows[y][x]]; ctx.fillRect(x * px, y * px, px, px); }
       return c.toDataURL();
     }
